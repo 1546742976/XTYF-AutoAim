@@ -19,7 +19,8 @@ autoaim/
 │       ├── estimation/
 │       ├── decision/
 │       ├── control/
-│       └── pipeline/
+│       ├── pipeline/
+│       └── mission/
 ├── src/
 │   └── ...                 # 与 include 对应
 ├── apps/
@@ -44,23 +45,35 @@ autoaim/
 
 | 模块 | 职责 |
 | --- | --- |
-| `core` | 时间、结果、配置、日志、基础类型 |
+| `core` | 时间、结果、配置、日志、基础类型、溯源与证据分级 |
 | `math` | 角度、变换、SE3、数值方法 |
-| `hal` | 相机、云台反馈、串口、时钟抽象 |
-| `vision` | 帧、检测、PnP、标定 |
-| `estimation` | 观测、关联、Tracker、EKF、状态机 |
-| `decision` | 预测、选板、弹道、火控 |
-| `control` | 指令、平滑、协议、CRC、看门狗 |
-| `pipeline` | 主循环、队列、调度、命令槽 |
+| `hal` | 相机、云台反馈与操作手输入、传输、时钟抽象 |
+| `vision` | 帧、检测、PnP 候选、标定 |
+| `estimation` | 观测、关联、Tracker、运动模型、EKF、状态机 |
+| `decision` | 预测、选板、弹道、瞄准充分性 |
+| `control` | 指令、安全门控、平滑、协议、CRC、看门狗 |
+| `pipeline` | 主循环、队列、调度、命令槽、契约组装 |
+| `mission` | 任务策略、目标优先级、开火权威 |
 
 ## 依赖方向
 
 ```text
-apps → pipeline → decision → estimation → vision → math → core
-                ↘ control → hal
+apps → pipeline
+         ├→ mission → decision → estimation → vision → math → core
+         ├→ control → hal → core
+         └→ hal
 ```
 
-依赖只能向下，同层通过接口通信。
+依赖只能向下，同层通过接口通信。`pipeline` 是唯一编排层：独占持有传输、组装契约（含 `ControlIntent`）并注入下层。
+
+## 横切约定
+
+| 约定 | 内容 | 落点 |
+| --- | --- | --- |
+| 契约溯源 | 跨模块对象携带帧号、世代、曝光时间、有效截止、坐标系与单位；「是否有效」在消费点按当前时间计算，不存成 bool | `core/time.hpp`、`core/units.hpp`、各契约 |
+| 开火权威与指令空间 | 自主（哨兵、打符）独占云台与开火位；受监督（步兵）只拥有相对修正通道，云台指向由操作手输入与修正量叠加决定 | `core/types.hpp`、`mission/`、`control/control_intent.hpp` |
+| 能力证据分级 | 能力区分「未标定 / 仅声明 / 已实测」；配置声明最高只能到「仅声明」，安全判据只接受「已实测」 | `core/config.hpp` |
+| 并发不变量 | 计算可并行，估计状态只能由单一线程按采集顺序更新；过期结果的丢弃点唯一 | `pipeline/` |
 
 ## 快速开始
 
@@ -82,12 +95,12 @@ ctest --test-dir build --output-on-failure
 
 | 文件 | 职责 |
 | --- | --- |
-| `core/types.hpp` | 基础类型、ID、错误码 |
+| `core/types.hpp` | 基础类型、ID、错误码、开火权威与指令空间 |
 | `core/result.hpp` | `Result<T>` / `Status` 统一失败表达 |
-| `core/time.hpp` | 单调时钟封装、时间换算 |
-| `core/config.hpp` | 配置读取与启动校验 |
+| `core/time.hpp` | 单调时钟封装、时间换算、溯源时间戳 |
+| `core/config.hpp` | 配置读取、启动校验、能力证据分级 |
 | `core/logging.hpp` | 结构化日志、分级输出 |
-| `core/units.hpp` | 强类型单位，防量纲错误 |
+| `core/units.hpp` | 强类型单位与参考系，防量纲与坐标系错误 |
 
 对应 `src/core/`：
 
@@ -121,8 +134,8 @@ ctest --test-dir build --output-on-failure
 | 文件 | 职责 |
 | --- | --- |
 | `hal/camera.hpp` | 相机抽象接口 |
-| `hal/gimbal_feedback.hpp` | 云台姿态反馈抽象 |
-| `hal/transport.hpp` | 串口/网络发送抽象 |
+| `hal/gimbal_feedback.hpp` | 云台姿态反馈与操作手输入抽象 |
+| `hal/transport.hpp` | 串口/网络发送抽象，出站帧带序号 |
 | `hal/clock.hpp` | 可注入时钟，支持离线回放 |
 
 对应 `src/hal/`：
@@ -139,11 +152,11 @@ ctest --test-dir build --output-on-failure
 | 文件 | 职责 |
 | --- | --- |
 | `vision/frame.hpp` | 图像帧契约（图像 + 曝光时间戳） |
-| `vision/frame_packet.hpp` | `FramePacket`：图像、曝光时间、姿态、内存所有权 |
+| `vision/frame_packet.hpp` | `FramePacket`：图像、曝光时间、姿态（自带时间戳与有效性）、内存所有权 |
 | `vision/detection.hpp` | 检测输出结构（颜色、类别、四角点、置信度） |
 | `vision/detector.hpp` | 检测器抽象接口 |
 | `vision/detector_factory.hpp` | 检测后端工厂 |
-| `vision/pnp.hpp` | PnP 位姿解算接口与结果 |
+| `vision/pnp.hpp` | PnP 候选生成：候选集合、协方差、四角物理顺序可信度 |
 | `vision/calibration.hpp` | 相机模型与标定结果 |
 
 对应 `src/vision/`：
@@ -153,7 +166,7 @@ ctest --test-dir build --output-on-failure
 | `vision/detector_onnx.cpp` | ONNX 检测后端 |
 | `vision/detector_traditional.cpp` | 传统灯条检测后端 |
 | `vision/detector_factory.cpp` | 检测器工厂实现 |
-| `vision/pnp.cpp` | PnP 解算、双解判别、重投影验证 |
+| `vision/pnp.cpp` | PnP 候选生成、多解判别、重投影验证、协方差输出 |
 | `vision/calibration.cpp` | 标定、内参/外参计算 |
 
 ### estimation
@@ -161,14 +174,15 @@ ctest --test-dir build --output-on-failure
 | 文件 | 职责 |
 | --- | --- |
 | `estimation/observation.hpp` | 观测结构（位置 + yaw + 协方差） |
-| `estimation/target_snapshot.hpp` | `TargetSnapshot`：目标状态、协方差、源帧、质量 |
+| `estimation/target_snapshot.hpp` | `TargetSnapshot`：目标状态、协方差、装甲板身份、世代、源帧、质量 |
 | `estimation/association.hpp` | 数据关联接口 |
-| `estimation/tracker.hpp` | 跟踪器抽象 |
-| `estimation/ekf.hpp` | 11 维整车 EKF |
-| `estimation/state_machine.hpp` | 跟踪状态机 |
+| `estimation/tracker.hpp` | 跟踪器抽象（跨运动模型 / 测量模型 / 数值实现三轴） |
+| `estimation/motion_model.hpp` | 运动模型：恒速、恒角速度、含角加速度、少数运动模式 |
+| `estimation/ekf.hpp` | EKF 数值实现（数值轴的一种，可替换） |
+| `estimation/state_machine.hpp` | 跟踪状态机，含滞回与切换事件 |
 | `estimation/health.hpp` | 健康监测与发散恢复 |
 | `estimation/armor_id.hpp` | 自动板身份辨识 |
-| `estimation/geometry_selector.hpp` | 在线几何选择（同高/两两同高/四板独立/斜轴） |
+| `estimation/geometry_selector.hpp` | 在线几何选择（同高/两两同高/四板独立/斜轴），含几何情况声明与证据等级 |
 
 对应 `src/estimation/`：
 
@@ -177,6 +191,7 @@ ctest --test-dir build --output-on-failure
 | `estimation/observation.cpp` | 观测构造与协方差设置 |
 | `estimation/association.cpp` | 马氏距离、门控、代价矩阵 |
 | `estimation/tracker.cpp` | Tracker 装配与预测/更新 |
+| `estimation/motion_model.cpp` | 各运动模型的状态转移与过程噪声 |
 | `estimation/ekf.cpp` | EKF 预测、更新、Joseph 形式 |
 | `estimation/state_machine.cpp` | 状态机迁移与滞回 |
 | `estimation/health.cpp` | 发散检测、NaN/Inf、复位 |
@@ -190,7 +205,7 @@ ctest --test-dir build --output-on-failure
 | `decision/predictor.hpp` | 延迟补偿、未来状态外推、飞行时间迭代 |
 | `decision/armor_selector.hpp` | 候选过滤、评分、滞回 |
 | `decision/ballistic.hpp` | 弹道解算接口与结果 |
-| `decision/fire_control.hpp` | 开火判断接口与上下文 |
+| `decision/aim_adequacy.hpp` | 瞄准充分性评估：只输出证据，不产生开火使能 |
 | `decision/hit_probability.hpp` | 完整命中概率模型 |
 
 对应 `src/decision/`：
@@ -200,37 +215,37 @@ ctest --test-dir build --output-on-failure
 | `decision/predictor.cpp` | 延迟补偿、外推、飞行时间迭代 |
 | `decision/armor_selector.cpp` | 候选过滤、评分、滞回 |
 | `decision/ballistic.cpp` | 无阻力/带阻力弹道、正反解 |
-| `decision/fire_control.cpp` | 开火判据合取、动态窗口 |
+| `decision/aim_adequacy.cpp` | 误差持续性与受扰判定，输出证据与失效原因 |
 | `decision/hit_probability.cpp` | 落点分布积分与实时近似 |
 
 ### control
 
 | 文件 | 职责 |
 | --- | --- |
-| `control/command.hpp` | 控制指令结构 |
-| `control/control_intent.hpp` | `ControlIntent`：控制/开火许可、期望角、前馈、有效截止时间 |
+| `control/command.hpp` | 控制指令结构，唯一产生开火使能 |
+| `control/control_intent.hpp` | `ControlIntent`：开火权威、指令空间、世代、期望角、前馈、有效截止时间 |
 | `control/smoother.hpp` | 指令平滑（限速、低通、死区） |
 | `control/protocol.hpp` | 协议编解码、流式解析 |
 | `control/crc.hpp` | CRC16-CCITT |
-| `control/watchdog.hpp` | 看门狗、超时清零控制 |
+| `control/watchdog.hpp` | 看门狗、故障锁存、超时清零控制 |
 
 对应 `src/control/`：
 
 | 文件 | 职责 |
 | --- | --- |
-| `control/command.cpp` | 控制指令构造与有效位 |
+| `control/command.cpp` | 控制指令构造、开火使能合成与有效位 |
 | `control/smoother.cpp` | 限速、低通、死区实现 |
 | `control/protocol.cpp` | 帧打包、拆包、流式解析 |
 | `control/crc.cpp` | CRC16-CCITT 实现 |
-| `control/watchdog.cpp` | 超时清零、安全默认 |
+| `control/watchdog.cpp` | 超时清零、故障锁存、安全默认 |
 
 ### pipeline
 
 | 文件 | 职责 |
 | --- | --- |
-| `pipeline/pipeline.hpp` | 主循环与流水线 |
-| `pipeline/queue.hpp` | 最新帧队列、有界队列 |
-| `pipeline/scheduler.hpp` | 线程调度 |
+| `pipeline/pipeline.hpp` | 主循环与流水线，唯一编排层，组装契约并注入下层 |
+| `pipeline/queue.hpp` | 最新帧队列、有界队列，唯一丢弃点与丢帧记账 |
+| `pipeline/scheduler.hpp` | 线程调度，计算并行而估计状态单写者 |
 | `pipeline/command_slot.hpp` | 命令槽（单槽覆盖） |
 
 对应 `src/pipeline/`：
@@ -252,7 +267,7 @@ ctest --test-dir build --output-on-failure
 对应 `src/mission/`：
 
 | 文件 | 职责 |
-|---|---|
+| --- | --- |
 | `mission/mission_factory.cpp` | 任务工厂实现 |
 
 #### mission/infantry
@@ -260,21 +275,21 @@ ctest --test-dir build --output-on-failure
 | 文件 | 职责 |
 | --- | --- |
 | `mission/infantry/infantry_mission.hpp` | 步兵任务接口 |
-| `src/mission/infantry/infantry_mission.cpp` | 步兵：常规装甲板跟踪、选板、弹道、开火 |
+| `src/mission/infantry/infantry_mission.cpp` | 步兵：目标策略、开火权威（受监督 + 叠加修正） |
 
 #### mission/sentry
 
 | 文件 | 职责 |
 | --- | --- |
 | `mission/sentry/sentry_mission.hpp` | 哨兵任务接口 |
-| `src/mission/sentry/sentry_mission.cpp` | 哨兵：多目标优先级、巡逻/防守策略 |
+| `src/mission/sentry/sentry_mission.cpp` | 哨兵：多目标优先级、巡逻/防守策略、自主开火权威 |
 
 #### mission/rune
 
 | 文件 | 职责 |
 | --- | --- |
 | `mission/rune/rune_mission.hpp` | 打符任务接口 |
-| `src/mission/rune/rune_mission.cpp` | 打符：符盘检测、旋转预测、击打时机 |
+| `src/mission/rune/rune_mission.cpp` | 打符：符盘检测、旋转预测、击打时机、自主开火权威 |
 
 ## apps/
 

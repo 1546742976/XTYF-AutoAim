@@ -1,6 +1,7 @@
 #pragma once
 
 #include "autoaim/pipeline/queue.hpp"
+#include "autoaim/pipeline/uart_adapter.hpp"
 #include "autoaim/vision/detector_factory.hpp"
 #include "autoaim/vision/corner_refine.hpp"
 #include "autoaim/estimation/tracker.hpp"
@@ -51,8 +52,16 @@ struct PipelineConfig {
   math::Point3<math::WorldFrame> launch_origin;
   Eigen::Quaterniond aim_reference_to_world;
   core::Evidence control_channel;
+  std::map<vision::ArmorSize, vision::PlateDimensions> typed_plate_sizes{};
+  std::optional<UartFeedbackOptions> uart_feedback{};
+  bool independent_button_input = false; // 缺少新配置时保持旧 enable_event 语义。
+  core::Evidence button_evidence = core::Evidence::declared();
 };
+
+// 缺少显式尺寸返回空；legacy 配置只按其旧模型编号查表，不推断板型。
+const vision::PlateDimensions* plate_dimensions(const PipelineConfig& config,
+                                                const vision::Detection& detection);
 
 // 只读文件，不创建线程、检测器推理请求或设备会话；首版入口只接受 replay。
 core::Result<PipelineConfig> load_pipeline_config(const std::filesystem::path& path);
-}  // namespace autoaim::pipeline
+} // namespace autoaim::pipeline

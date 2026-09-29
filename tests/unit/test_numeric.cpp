@@ -3,6 +3,7 @@
 
 int main() {
   using namespace autoaim::math;
+
   return test::run([] {
     Eigen::Matrix2d matrix = Eigen::Matrix2d::Identity() * 2;
     auto solved = solve_positive_definite(matrix, Eigen::Matrix2d::Identity());

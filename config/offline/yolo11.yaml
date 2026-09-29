@@ -1,0 +1,102 @@
+# YOLO 离线接入模板：只复用合成场景参数，不是设备标定。
+# 替换 detector.model_path 与 input_manifest；不自动下载模型。
+execution: replay
+role: infantry
+initial_mode: assist
+operator_input:
+  kind: legacy_enable_event # 使用独立按键清单时改为 button。
+  button_mode: toggle
+  # button_mode: hold # 替换上一行，不要同时保留两个生效键。
+program_fire_requested: false
+device_id: synthetic-camera
+configuration_id: synthetic-v1
+input_manifest: ../../out/synthetic/events.yaml
+calibration_file: calibration.yaml
+geometry_files: [geometry.yaml]
+launch_origin_world_m: [0, 0, 0]
+aim_reference_to_world_wxyz: [1, 0, 0, 0]
+publish_period_s: 0.01
+intent_lifetime_s: 0.05
+after_send_delay_s: 0.01
+detector:
+  kind: yolo11
+  model_path: ../../models/yolo11.xml # 必须由使用者提供，BIN 与 XML 相邻。
+  device: CPU
+  enemy: red
+  confidence: 0.7
+  nms_iou: 0.3
+  maximum_candidates: 128
+  maximum_detections: 16
+corners: {indices: [0, 1, 2, 3], model_id: yolo11, mapping_id: unverified-physical-order}
+refinement: {enabled: true, brightness: 100, color_difference: 50, search_radius_px: 3, maximum_shift_px: 4, minimum_pixels: 6}
+plate_sizes:
+  - {plate_type: small, width_m: 0.135, height_m: 0.055}
+  - {plate_type: big, width_m: 0.230, height_m: 0.055} # 仅离线测试尺寸，实机须核实。
+queue: {pool_capacity: 6, pending_capacity: 2, in_flight_limit: 2, maximum_age_s: 0.1}
+history: {capacity: 64, maximum_gap_s: 0.05}
+pnp:
+  maximum_rms_px: 3
+  maximum_corner_error_px: 5
+  minimum_edge_px: 3
+  minimum_view_cosine: 0.02
+  ambiguity_rms_gap_px: 0.1
+  pixel_sigma_px: 1
+  minimum_information_ratio: 1.0e-10
+  prior_position_gate_m: 0.2
+  prior_rotation_gate_rad: 0.5
+  prior_maximum_age_s: 0.1
+  additional_pose_variance: [0.0001, 0.0001, 0.0001, 0.0001, 0.0001, 0.0001]
+motion:
+  linear_accel_psd: 0.1
+  angular_accel_psd: 0.1
+  angular_jerk_psd: 0.5
+  maximum_horizon_s: 1
+  maximum_alpha_radps2: 20
+  rotation_threshold_radps: 0.1
+  acceleration_enter_radps2: 5
+  acceleration_exit_radps2: 1
+  selection_observations: 3
+  minimum_dwell_s: 0.2
+  maximum_gap_s: 0.1
+tracker:
+  maximum_hypotheses: 32
+  initial_variance: [0.1, 0.1, 0.1, 1, 1, 1, 0.1, 1, 0.1]
+  nis_limits: [3.841458820694124, 5.991464547107979, 7.814727903251179, 9.487729036781154, 11.070497693516351, 12.591587243743977]
+  identity: {observations: 3, margin: 0.05, maximum_cost: 50, previous_weight: 0.5}
+  geometry: {observations: 3, margin: 0.1, maximum_cost: 50, previous_weight: 0.5}
+  convergence: {observations: 3, duration_s: 0.04, maximum_gap_s: 0.08, phase_enter_rad2: 0.1, phase_exit_rad2: 0.5}
+  lost_after_s: 0.3
+  health: {maximum_rejections: 4, position_variance_m2: 100, phase_variance_rad2: 100}
+  geometry_dwell_s: 0.1
+  geometry_complexity_penalty: 0.01
+  association_margin: 0.001
+  initial_alpha_variance: 0.1
+targets:
+  maximum_count: 8
+  association_margin: 0.01
+  maximum_same_target_separation_m: 0.8
+  maximum_source_age_s: 0.1
+  lost_timeout_s: 0.3
+  maximum_position_variance_m2: 0.1
+prediction: {geometry_position_variance_m2: 0.0001, geometry_rotation_variance_rad2: 0.001, unknown_velocity_sigma_mps: 1}
+ballistic: {gravity_mps2: [0, 0, -9.81], maximum_flight_s: 0.8, minimum_range_m: 0.1}
+intercept: {maximum_iterations: 16, time_tolerance_s: 0.00001, position_tolerance_m: 0.0001}
+armor: {minimum_incidence_cosine: 0.05, direction_weight: 1, flight_time_weight: 0.1, position_variance_weight: 1, switch_margin: 0.05, minimum_dwell_s: 0.1}
+impact:
+  speed_sigma_mps: 0.1
+  aim_variance_rad2: [0.000001, 0.000001, 0.000001]
+  origin_variance_m2: [0.000001, 0.000001, 0.000001]
+  timing_sigma_s: 0.002
+  scatter_variance_m2: [0.000001, 0.000001, 0.000001]
+margin: {sigma_multiplier: 3, reserved_edge_m: 0.002, minimum_normal_speed_mps: 0.1}
+safety:
+  control_age_s: 0.15
+  fire_age_s: 0.08
+  feedback_age_s: 0.05
+  operator_age_s: 0.05
+  yaw_tolerance_rad: 0.01
+  pitch_tolerance_rad: 0.01
+  settled_observations: 3
+  settled_duration_s: 0.04
+  maximum_gap_s: 0.08
+smoother: {maximum_correction_rad: 0.1, maximum_rate_radps: 1, time_constant_s: 0.03, enter_rad: 0.02, leave_rad: 0.01, minimum_dwell_s: 0.02}

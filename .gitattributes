@@ -1,2 +1,2 @@
 # WSL/Linux 的 Bash 脚本在 Windows 检出时也必须保留 LF。
-install_indenpence.sh text eol=lf
+install_dependence.sh text eol=lf

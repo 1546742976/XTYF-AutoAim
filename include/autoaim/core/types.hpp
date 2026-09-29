@@ -31,12 +31,15 @@ struct Stamp {
 
   Stamp(FrameId id, Generation epoch, TimePoint time)
       : frame_id(id), generation(epoch), exposure(time) {
-    if (id == 0) throw std::invalid_argument("Frame id zero is reserved");
+    if (id == 0)
+      throw std::invalid_argument("Frame id zero is reserved");
   }
 };
 
 inline Generation next_generation(Generation current) {
-  if (current == UINT64_MAX) throw std::overflow_error("Generation exhausted");
+  if (current == UINT64_MAX)
+    throw std::overflow_error("Generation exhausted");
+
   return current + 1;
 }
-}  // namespace autoaim::core
+} // namespace autoaim::core

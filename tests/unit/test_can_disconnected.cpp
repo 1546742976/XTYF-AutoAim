@@ -3,6 +3,7 @@
 
 int main() {
   using namespace autoaim;
+
   return test::run([] {
     hal::CanTransport can({"not-opened", 0x100, {0x101, 0x102}});
     CHECK(!can.is_open());

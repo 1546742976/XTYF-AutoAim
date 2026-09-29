@@ -10,8 +10,15 @@ enum class ClockDomain { host_monotonic, replay };
 class TimePoint {
 public:
   explicit TimePoint(std::int64_t ns, ClockDomain domain);
-  std::int64_t nanoseconds() const noexcept { return ns_; }
-  ClockDomain domain() const noexcept { return domain_; }
+
+  std::int64_t nanoseconds() const noexcept {
+    return ns_;
+  }
+
+  ClockDomain domain() const noexcept {
+    return domain_;
+  }
+
 private:
   std::int64_t ns_;
   ClockDomain domain_;
@@ -20,7 +27,8 @@ private:
 Seconds elapsed(TimePoint later, TimePoint earlier);
 TimePoint advance(TimePoint time, Seconds delta);
 TimePoint monotonic_now();
+
 // 未来时间、跨时钟域、负时效均不能被判为新鲜；上限相等时已到期。
 bool fresh(TimePoint source, TimePoint now, Seconds max_age) noexcept;
 bool same_time(TimePoint left, TimePoint right) noexcept;
-}  // namespace autoaim::core
+} // namespace autoaim::core

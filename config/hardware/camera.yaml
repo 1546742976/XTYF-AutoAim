@@ -1,0 +1,16 @@
+# 参数契约模板；本文件不能启动设备，也不代表这些候选值已由设备回读。
+camera:
+  model: MV-CS016-10UC
+  serial_number: null # 待填写实际序列号。
+  exposure_s: null
+  gain: null
+  frame_rate_hz: 150 # 目标值，非实测结果。
+  transport_delay_s: null
+  timing_uncertainty_s: null
+  maximum_frame_bytes: 4665600 # 1440*1080*3，内存容量而非设备性能。
+  roi: {width: 1440, height: 1080, offset_x: 0, offset_y: 0} # 全幅候选。
+  calibration_geometry: {width: null, height: null, offset_x: null, offset_y: null}
+  pixel_format: BayerRG8 # 可选择 BGR8；内部图像始终 BGR8。
+  white_balance: manual
+  balance_ratio_rgb: [null, null, null] # SDK 的整数比例，不猜设备值。
+  # white_balance: continuous # 选择连续时同时删除 balance_ratio_rgb。

@@ -15,8 +15,10 @@ int main() {
     std::atomic<bool> passed{true};
     auto write = [&] {
       for (int i = 0; i < 50; ++i)
-        if (!logger.write(LogLevel::info, "line")) passed = false;
+        if (!logger.write(LogLevel::info, "line"))
+          passed = false;
     };
+
     std::thread first(write), second(write);
     first.join();
     second.join();
@@ -24,7 +26,12 @@ int main() {
     std::istringstream lines(stream.str());
     std::string line;
     int count = 0;
-    while (std::getline(lines, line)) { CHECK(line == "[info] line"); ++count; }
+
+    while (std::getline(lines, line)) {
+      CHECK(line == "[info] line");
+      ++count;
+    }
+
     CHECK(count == 100);
     stream.setstate(std::ios::badbit);
     CHECK(!logger.write(LogLevel::error, "failed stream"));

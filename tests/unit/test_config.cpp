@@ -3,8 +3,11 @@
 
 int main() {
   using namespace autoaim::core;
+
   return test::run([] {
-    auto config = Config::parse("camera:\n  exposure: 0.01\n  calibrated: true\nname: replay\nbad: .nan\n");
+    auto config =
+        Config::parse("camera:\n  exposure: 0.01\n  calibrated: true\nname: replay\nbad: .nan\n");
+
     CHECK(config);
     const auto& value = config.value();
     CHECK_NEAR(value.number("camera.exposure", 0.001, 1), 0.01, 1e-12);

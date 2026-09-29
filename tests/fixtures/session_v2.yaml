@@ -1,0 +1,22 @@
+schema_version: 2
+domain: replay
+session: {device_id: fixture-camera, configuration_id: fixture-v2, model_id: fixture-model}
+events:
+  - {at_ns: 100, kind: uart, bytes: [65, 66, 0, 255]}
+  - {at_ns: 100, kind: button, valid: true, intervening: false, pressed: false}
+  - at_ns: 200
+    kind: image
+    frame_id: 1
+    exposure_ns: 150
+    received_ns: 190
+    path: tiny.ppm
+    time_origin: receipt_estimated
+    timing_sigma_s: 0.001
+    device_frame_id: 27
+    device_timestamp_ticks: 3456
+    device_dropped_frames: 2
+    pixel_format: BayerRG8
+    roi_offset: [2, 4]
+    device_frame_discontinuity: true
+    annotations: [{category: three, color: red, plate_type: small}]
+complete: true

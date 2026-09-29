@@ -1,0 +1,15 @@
+# 仅映射模板，不启动硬件。以下项必须依据固件/实测填写，不猜轴向和符号。
+uart_feedback:
+  pose_source: packet_quaternion
+  quaternion_direction: null # body_to_reference 或 reference_to_body
+  packet_reference_to_world_wxyz: [null, null, null, null]
+  gimbal_to_packet_body_wxyz: [null, null, null, null]
+  yaw_sign: null # +1 或 -1
+  pitch_sign: null
+  yaw_offset_rad: null
+  pitch_offset_rad: null
+  receive_delay_s: null # 接收回推估计，不证明时钟同步。
+operator_input:
+  kind: button # 独立来源；AB43 中没有此按键字段。
+  button_mode: toggle
+  # button_mode: hold

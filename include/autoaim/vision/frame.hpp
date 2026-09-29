@@ -3,4 +3,4 @@
 
 namespace autoaim::vision {
 using Frame = core::CapturedFrame;
-}  // namespace autoaim::vision
+} // namespace autoaim::vision

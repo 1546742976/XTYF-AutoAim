@@ -9,4 +9,4 @@ namespace autoaim::control {
 std::uint16_t crc16(const std::uint8_t* data, std::size_t size);
 bool check_crc16(const std::vector<std::uint8_t>& packet);
 void append_crc16(std::vector<std::uint8_t>& packet);
-}  // namespace autoaim::control
+} // namespace autoaim::control

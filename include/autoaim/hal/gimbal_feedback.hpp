@@ -10,9 +10,10 @@ struct OperatorInput {
   core::TimePoint sampled_at;
   bool valid;
   bool intervening;
-  std::uint64_t enable_event;  // 单调事件号；按住按钮不能反复产生重新启用事件。
+  std::uint64_t enable_event; // 单调事件号；按住按钮不能反复产生重新启用事件。
   core::Evidence source_evidence;
 };
+
 struct GimbalFeedback {
   const core::TimePoint sampled_at;
   const core::Generation generation;
@@ -24,4 +25,4 @@ struct GimbalFeedback {
   const bool status_valid;
   const std::optional<OperatorInput> operator_input;
 };
-}  // namespace autoaim::hal
+} // namespace autoaim::hal

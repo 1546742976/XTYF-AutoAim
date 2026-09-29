@@ -1,0 +1,35 @@
+# 数据清单模板，不是可运行数据集。null 必须用实际测量值替换，不复制示例物理尺寸。
+source_kind: recorded # 仅真实采集使用 recorded；生成数据使用 synthetic。
+provenance:
+  device_id: null
+  configuration_id: null # 区分镜头、焦距、ROI、分辨率等设置。
+  date: null
+board:
+  kind: chessboard # 或 symmetric_circles。
+  columns: null # 棋盘格是内角点列数，不是方格数；圆点阵是圆心列数。
+  rows: null
+  spacing_m: null # 相邻角点/圆心的实测间距，米。
+image_width: null
+image_height: null
+roi_offset: [null, null]
+maximum_pair_skew_s: null # 手眼求解必须提供，与同步数据精度相符。
+validation_limits:
+  rms_px: null # 内参独立验证门限，正数。
+  rotation_rad: null # 手眼独立验证旋转门限，正数。
+  translation_m: null # 手眼独立验证平移门限，正数。
+samples: [] # 至少三份 fit 才求解；通过证据另外要求至少两份独立 validation。
+# samples:
+#   - id: fit-001
+#     split: fit
+#     path: images/fit-001.png # 路径相对清单；不能与 image_points 同时提供。
+#     # image_points: [[x0, y0], ...] # 也可显式提供按板坐标行优先排列的图像点。
+#     # 以下字段仅手眼需要；不得把缺失平移补成零。
+#     image_time_ns: null
+#     pose_time_ns: null
+#     gimbal_to_reference:
+#       quaternion_wxyz: [null, null, null, null]
+#       translation_m: [null, null, null]
+#   - id: validation-001
+#     split: validation
+#     path: images/validation-001.png
+#     # 手眼验证样本同样需要上述完整同步位姿，板在参考系中保持固定。

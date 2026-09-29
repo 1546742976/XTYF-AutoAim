@@ -2,6 +2,10 @@
 execution: replay
 role: infantry
 initial_mode: assist
+operator_input:
+  kind: legacy_enable_event # 旧合成示例；原始独立按键清单改为 button。
+  button_mode: toggle
+  # button_mode: hold # 替换上一行即可选择按住自动、松开辅助；两种实现都编译。
 program_fire_requested: false
 device_id: synthetic-camera
 configuration_id: synthetic-v1
@@ -15,6 +19,7 @@ intent_lifetime_s: 0.05
 after_send_delay_s: 0.01
 detector:
   kind: traditional
+  plate_type: small # 仅合成场景显式约定，不推断真实目标尺寸。
   enemy: red
   brightness: 100
   color_difference: 50
@@ -26,7 +31,7 @@ detector:
 corners: {indices: [0, 1, 2, 3], model_id: traditional, mapping_id: unverified-physical-order}
 refinement: {enabled: true, brightness: 100, color_difference: 50, search_radius_px: 3, maximum_shift_px: 4, minimum_pixels: 6}
 plate_sizes:
-  - {class_id: -1, width_m: 0.135, height_m: 0.055}
+  - {plate_type: small, width_m: 0.135, height_m: 0.055}
 queue: {pool_capacity: 6, pending_capacity: 2, in_flight_limit: 2, maximum_age_s: 0.1}
 history: {capacity: 64, maximum_gap_s: 0.05}
 pnp:

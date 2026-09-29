@@ -5,14 +5,17 @@
 #include <memory>
 #include <string>
 #include <exception>
+#include <map>
 
 namespace autoaim::vision {
 class Detector {
 public:
   virtual ~Detector() = default;
+
   // 实例不并发重入；异步调度为每个在途请求提供独立实例/请求槽。
   virtual DetectionBatch detect(const FramePacket& frame) = 0;
 };
+
 struct TraditionalOptions {
   TeamColor enemy;
   int brightness_threshold;
@@ -22,16 +25,21 @@ struct TraditionalOptions {
   double minimum_pair_ratio;
   double maximum_pair_ratio;
   std::size_t maximum_lightbars;
+  ArmorSize plate_type = ArmorSize::unknown;
 };
+
 class TraditionalDetector final : public Detector {
 public:
   explicit TraditionalDetector(TraditionalOptions options);
   DetectionBatch detect(const FramePacket& frame) override;
+
 private:
   TraditionalOptions options_;
 };
 
-struct Yolov5Options {
+enum class YoloFormat { legacy_v5, armor_v11 };
+
+struct YoloOptions {
   std::string model_path;
   std::string device;
   TeamColor enemy;
@@ -39,12 +47,19 @@ struct Yolov5Options {
   double nms_iou_threshold;
   std::size_t maximum_candidates;
   std::size_t maximum_detections;
+  std::map<int, ArmorSize> plate_type_by_class{};
+  YoloFormat format = YoloFormat::legacy_v5;
 };
+
+using Yolov5Options = YoloOptions; // 既有调用兼容；新代码用 YoloOptions + 显式格式。
 
 // 旧模型的 22 列格式：8 个角点坐标、objectness logit、4 色、9 类。
 // 输出为原图像素；兼容重排不等于标签语义已验证，corners_reliable 始终为 false。
 std::vector<Detection> parse_yolov5(const cv::Mat& output, double resize_scale,
-                                  cv::Size original_size, const Yolov5Options& options);
+                                    cv::Size original_size, const Yolov5Options& options);
+// 参考装甲 YOLO11：50 x N，xywh + 38 类概率 + 8 个关键点坐标；不排序原始关键点。
+std::vector<Detection> parse_yolo11(const cv::Mat& output, double resize_scale,
+                                   cv::Size original_size, const YoloOptions& options);
 
 class OpenVinoDetector final : public Detector {
 public:
@@ -53,20 +68,24 @@ public:
     std::optional<DetectionBatch> detections;
     std::exception_ptr failure;
   };
+
   explicit OpenVinoDetector(Yolov5Options options, std::size_t request_capacity = 1);
   ~OpenVinoDetector() override;
   DetectionBatch detect(const FramePacket& frame) override;
+
   // 以下方法由一个调度线程调用；OpenVINO 执行计算。无内部等待帧队列。
   // 满槽返回 false，已完成但尚未领取的请求仍占槽；原图与预处理输入都保留到结束。
   bool try_submit(std::shared_ptr<const FramePacket> frame);
   std::optional<Completion> take_completed();
   std::size_t in_flight() const noexcept;
   std::size_t prepared_bytes() const noexcept;
+
   // 终止接纳并等待实际请求完成，不假设 cancel 已释放输入；不得与上述方法并发。
   void close() noexcept;
+
 private:
   // 每实例独占请求和预处理缓冲；输入在 infer 返回之前不会析构或复用。
   class Impl;
   std::unique_ptr<Impl> impl_;
 };
-}  // namespace autoaim::vision
+} // namespace autoaim::vision

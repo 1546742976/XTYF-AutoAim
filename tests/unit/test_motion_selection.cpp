@@ -3,9 +3,13 @@
 
 int main() {
   using namespace autoaim;
+
   return test::run([] {
     estimation::MotionSelector selector({0.1, 2, 0.5, 2, core::Seconds(0.02), core::Seconds(0.05)});
-    const auto stamp = [](std::uint64_t n) { return core::Stamp(n, 1, core::TimePoint(n * 10000000, core::ClockDomain::replay)); };
+    const auto stamp = [](std::uint64_t n) {
+      return core::Stamp(n, 1, core::TimePoint(n * 10000000, core::ClockDomain::replay));
+    };
+
     CHECK(selector.observe(stamp(1), 0, true));
     CHECK(selector.observe(stamp(2), 0.1, true));
     CHECK(selector.kind() == estimation::MotionKind::constant_velocity);

@@ -3,6 +3,7 @@
 
 int main() {
   using namespace autoaim;
+
   return test::run([] {
     hal::SerialTransport transport("/not-opened-offline-test", 115200);
     CHECK(!transport.is_open());

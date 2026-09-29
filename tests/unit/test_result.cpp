@@ -6,6 +6,7 @@
 int main() {
   using namespace autoaim::core;
   static_assert(!std::is_default_constructible_v<Result<int>>);
+
   return test::run([] {
     auto good = Result<int>::success(7);
     CHECK(good && good.value() == 7);

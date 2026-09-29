@@ -12,13 +12,21 @@ Eigen::Vector3d rotation_log(const Eigen::Quaterniond& rotation);
 class SE3 {
 public:
   SE3(Eigen::Quaterniond rotation, Eigen::Vector3d translation);
-  const Eigen::Quaterniond& rotation() const noexcept { return rotation_; }
-  const Eigen::Vector3d& translation() const noexcept { return translation_; }
+
+  const Eigen::Quaterniond& rotation() const noexcept {
+    return rotation_;
+  }
+
+  const Eigen::Vector3d& translation() const noexcept {
+    return translation_;
+  }
+
   Eigen::Vector3d apply(const Eigen::Vector3d& point) const;
   SE3 inverse() const;
   SE3 compose(const SE3& local_to_intermediate) const;
+
 private:
   Eigen::Quaterniond rotation_;
   Eigen::Vector3d translation_;
 };
-}  // namespace autoaim::math
+} // namespace autoaim::math

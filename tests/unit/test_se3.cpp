@@ -3,6 +3,7 @@
 
 int main() {
   using namespace autoaim::math;
+
   return test::run([] {
     const Eigen::Vector3d tangent(0.7, -1.1, 0.3);
     const auto q = rotation_exp(tangent);

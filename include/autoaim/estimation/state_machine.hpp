@@ -4,6 +4,7 @@
 
 namespace autoaim::estimation {
 enum class TrackLifecycle { acquiring, tracking, coasting, lost };
+
 struct TrackingLimits {
   std::size_t minimum_observations;
   core::Seconds minimum_convergence_time;
@@ -12,6 +13,7 @@ struct TrackingLimits {
   double phase_variance_enter;
   double phase_variance_exit;
 };
+
 struct QualityFacts {
   bool update_accepted;
   bool pose_reliable;
@@ -20,14 +22,23 @@ struct QualityFacts {
   bool fault;
   double phase_variance;
 };
+
 class TrackingStateMachine {
 public:
   explicit TrackingStateMachine(TrackingLimits limits);
   bool observe(const core::Stamp& source, const QualityFacts& facts);
+
   // 无观测时也调用；不刷新源时刻，超时立即撤销可靠性。
   void tick(core::TimePoint now);
-  TrackLifecycle lifecycle() const noexcept { return lifecycle_; }
-  TrackingQuality quality() const noexcept { return quality_; }
+
+  TrackLifecycle lifecycle() const noexcept {
+    return lifecycle_;
+  }
+
+  TrackingQuality quality() const noexcept {
+    return quality_;
+  }
+
 private:
   void interrupt_quality();
   TrackingLimits limits_;
@@ -41,6 +52,7 @@ private:
 };
 
 enum class MotionRegime { slow, steady_rotation, uncertain };
+
 struct MotionSelectionLimits {
   double rotation_threshold_radps;
   double acceleration_enter_radps2;
@@ -49,12 +61,20 @@ struct MotionSelectionLimits {
   core::Seconds minimum_dwell;
   core::Seconds maximum_gap;
 };
+
 class MotionSelector {
 public:
   explicit MotionSelector(MotionSelectionLimits limits);
   bool observe(const core::Stamp& source, double estimated_omega_radps, bool healthy);
-  MotionKind kind() const noexcept { return kind_; }
-  MotionRegime regime() const noexcept { return regime_; }
+
+  MotionKind kind() const noexcept {
+    return kind_;
+  }
+
+  MotionRegime regime() const noexcept {
+    return regime_;
+  }
+
 private:
   MotionSelectionLimits limits_;
   MotionKind kind_ = MotionKind::constant_velocity;
@@ -64,4 +84,4 @@ private:
   double previous_omega_ = 0;
   std::size_t support_ = 0;
 };
-}  // namespace autoaim::estimation
+} // namespace autoaim::estimation

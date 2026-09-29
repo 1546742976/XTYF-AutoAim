@@ -14,6 +14,7 @@ public:
   WriteResult write_all(const std::vector<std::uint8_t>& bytes, core::Seconds timeout) override;
   core::Result<std::vector<std::uint8_t>> read_for(core::Seconds timeout) override;
   std::uint64_t completed_writes() const;
+
 private:
   std::ostream& stream_;
   Clock& clock_;
@@ -21,4 +22,4 @@ private:
   bool failed_ = false;
   std::uint64_t completed_ = 0;
 };
-}  // namespace autoaim::hal
+} // namespace autoaim::hal

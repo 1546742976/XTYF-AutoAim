@@ -4,6 +4,7 @@
 
 int main() {
   using namespace autoaim;
+
   return test::run([] {
     const auto snapshot = test::snapshot();
     const auto later = core::advance(snapshot->state_time, core::Seconds(0.1));
@@ -17,8 +18,13 @@ int main() {
     const auto unknown = test::snapshot(false);
     const auto fallback = decision::predict_future(*unknown, later, {0.001, 0.001, 1});
     CHECK(fallback && fallback.value().plates.size() == 1);
-    CHECK(!fallback.value().plates.front().physical_plate && !fallback.value().plates.front().reliable);
-    CHECK(fallback.value().plates[0].covariance(0, 0) > unknown->visible_plate.covariance->operator()(0, 0));
-    CHECK(!decision::predict_future(*snapshot, core::advance(snapshot->state_time, core::Seconds(-0.1)), {0, 0, 1}));
+    CHECK(!fallback.value().plates.front().physical_plate &&
+          !fallback.value().plates.front().reliable);
+
+    CHECK(fallback.value().plates[0].covariance(0, 0) >
+          unknown->visible_plate.covariance->operator()(0, 0));
+
+    CHECK(!decision::predict_future(
+        *snapshot, core::advance(snapshot->state_time, core::Seconds(-0.1)), {0, 0, 1}));
   });
 }

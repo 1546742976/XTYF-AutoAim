@@ -19,6 +19,7 @@ public:
   explicit CorrectionSmoother(SmootherOptions options);
   core::Radians update(core::Radians requested, core::TimePoint now, bool enabled);
   core::Radians emergency_stop(core::TimePoint now);
+
 private:
   SmootherOptions options_;
   double value_ = 0;
@@ -26,4 +27,4 @@ private:
   std::optional<core::TimePoint> previous_;
   std::optional<core::TimePoint> transition_;
 };
-}  // namespace autoaim::control
+} // namespace autoaim::control

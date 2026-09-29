@@ -3,10 +3,15 @@
 
 int main() {
   using namespace autoaim;
+
   return test::run([] {
     const core::Stamp source(1, 2, core::TimePoint(100, core::ClockDomain::replay));
-    const mission::AimSolution aim{source, {core::Radians(-3.13), core::Radians(0.1)}, core::Metres(3), true};
-    decision::MeasuredPointing measured{source.exposure, 2, {core::Radians(3.13), core::Radians(0.04)}, true};
+    const mission::AimSolution aim{
+        source, {core::Radians(-3.13), core::Radians(0.1)}, core::Metres(3), true};
+
+    decision::MeasuredPointing measured{
+        source.exposure, 2, {core::Radians(3.13), core::Radians(0.04)}, true};
+
     const auto request = mission::infantry_assist(aim, measured);
     CHECK(!request.fire_requested && request.control_requested);
     CHECK(request.authority.space == core::CommandSpace::relative);

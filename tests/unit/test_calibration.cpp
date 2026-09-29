@@ -3,6 +3,7 @@
 
 int main() {
   using namespace autoaim;
+
   return test::run([] {
     const auto config = core::Config::parse(R"(calibration:
   width: 640
@@ -21,7 +22,9 @@ int main() {
     CHECK_NEAR(calibration.value().camera_to_gimbal().value().translation().x(), 0.1, 1e-12);
     CHECK(!calibration.value().qualified(core::ClockDomain::host_monotonic, "sim", "v1"));
     CHECK(!vision::load_calibration(core::Config::parse("calibration: {}").value()));
-    CHECK_THROWS(std::invalid_argument, vision::Calibration(640, 480, cv::Matx33d::zeros(),
-      {0, 0, 0, 0}, calibration.value().camera_to_gimbal(), core::Evidence::missing(), core::Evidence::missing()));
+    CHECK_THROWS(std::invalid_argument,
+                 vision::Calibration(640, 480, cv::Matx33d::zeros(), {0, 0, 0, 0},
+                                     calibration.value().camera_to_gimbal(),
+                                     core::Evidence::missing(), core::Evidence::missing()));
   });
 }

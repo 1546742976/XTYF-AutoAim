@@ -12,11 +12,14 @@ enum class LogLevel { debug, info, warning, error };
 class Logger {
 public:
   explicit Logger(std::ostream& sink, LogLevel minimum = LogLevel::info)
-      : sink_(sink), minimum_(minimum) {}
+      : sink_(sink), minimum_(minimum) {
+  }
+
   bool write(LogLevel level, std::string_view message) noexcept;
+
 private:
   std::ostream& sink_;
   LogLevel minimum_;
   std::mutex mutex_;
 };
-}  // namespace autoaim::core
+} // namespace autoaim::core

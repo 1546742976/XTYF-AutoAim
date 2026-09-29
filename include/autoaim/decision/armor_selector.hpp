@@ -11,20 +11,31 @@ struct ArmorSelectionOptions {
   double switch_margin;
   core::Seconds minimum_dwell;
 };
+
 class ArmorSelector {
 public:
   explicit ArmorSelector(ArmorSelectionOptions options);
+
   // 返回本次候选数组下标，不跨帧保存指向候选的引用，也不产生开火许可。
   // 当前板不可解/不满足入射条件时立即重选，不受正常切换驻留时间阻碍。
   std::optional<std::size_t> select(const core::Stamp& source, std::uint64_t target_id,
-      const std::string& profile_id, const std::vector<InterceptSolution>& candidates,
-      const Eigen::Vector3d& measured_aim_direction_world, const Eigen::Vector3d& gravity_mps2);
+                                    const std::string& profile_id,
+                                    const std::vector<InterceptSolution>& candidates,
+                                    const Eigen::Vector3d& measured_aim_direction_world,
+                                    const Eigen::Vector3d& gravity_mps2);
+
   void reset();
+
 private:
-  struct Key { std::uint64_t target; std::string profile; std::optional<std::size_t> plate; };
+  struct Key {
+    std::uint64_t target;
+    std::string profile;
+    std::optional<std::size_t> plate;
+  };
+
   ArmorSelectionOptions options_;
   std::optional<Key> active_;
   std::optional<core::TimePoint> switched_at_;
   std::optional<core::Stamp> last_source_;
 };
-}  // namespace autoaim::decision
+} // namespace autoaim::decision

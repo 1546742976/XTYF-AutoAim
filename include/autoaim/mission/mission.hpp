@@ -11,6 +11,7 @@ struct AimSolution {
   core::Metres distance;
   bool valid;
 };
+
 // 请求与最终指令分离，pipeline 再附加证据并提交唯一 command_guard。
 struct MissionRequest {
   const core::Stamp source;
@@ -20,4 +21,4 @@ struct MissionRequest {
   bool control_requested;
   bool fire_requested;
 };
-}  // namespace autoaim::mission
+} // namespace autoaim::mission

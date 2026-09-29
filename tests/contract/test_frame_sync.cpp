@@ -3,13 +3,23 @@
 
 int main() {
   using namespace autoaim;
+
   return test::run([] {
     pipeline::FrameSync sync(4, core::Seconds(0.05), 0);
     const core::TimePoint origin(0, core::ClockDomain::replay);
-    auto feedback = [&](double seconds, core::Generation generation, bool valid, bool bad_q = false) {
-      return hal::GimbalFeedback{core::advance(origin, core::Seconds(seconds)), generation,
-        {bad_q ? 0.0 : 1.0, 0, 0, 0}, 0, 0, 25, valid, true, std::nullopt};
+    auto feedback = [&](double seconds, core::Generation generation, bool valid,
+                        bool bad_q = false) {
+      return hal::GimbalFeedback{core::advance(origin, core::Seconds(seconds)),
+                                 generation,
+                                 {bad_q ? 0.0 : 1.0, 0, 0, 0},
+                                 0,
+                                 0,
+                                 25,
+                                 valid,
+                                 true,
+                                 std::nullopt};
     };
+
     CHECK(sync.push(feedback(0, 0, true)));
     CHECK(sync.push(feedback(0.02, 0, true)));
     const auto time = core::advance(origin, core::Seconds(0.01));

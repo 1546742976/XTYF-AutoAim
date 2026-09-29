@@ -14,6 +14,7 @@ public:
   std::shared_ptr<const control::ControlIntent> take(core::TimePoint now);
   void reset(core::Generation generation, core::TimePoint since);
   void close();
+
 private:
   std::mutex mutex_;
   core::Generation generation_;
@@ -23,4 +24,4 @@ private:
   bool closed_ = false;
   std::shared_ptr<const control::ControlIntent> latest_;
 };
-}  // namespace autoaim::pipeline
+} // namespace autoaim::pipeline

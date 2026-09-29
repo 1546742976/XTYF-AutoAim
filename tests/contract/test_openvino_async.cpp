@@ -6,16 +6,26 @@
 
 int main(int argc, char** argv) {
   using namespace autoaim;
+
   return test::run([&] {
-    CHECK(argc == 2);
-    vision::OpenVinoDetector detector({argv[1], "CPU", vision::TeamColor::red, 0.7, 0.3, 20, 8}, 2);
+    CHECK(argc == 2 || (argc == 3 && std::string(argv[2]) == "yolo11"));
+    vision::YoloOptions options{argv[1], "CPU", vision::TeamColor::red, 0.7, 0.3, 20, 8};
+    if (argc == 3)
+      options.format = vision::YoloFormat::armor_v11;
+
+    vision::OpenVinoDetector detector(options, 2);
     const auto make_packet = [](std::uint64_t id) {
       const core::TimePoint time(id, core::ClockDomain::replay);
       auto bytes = std::make_shared<const std::vector<std::uint8_t>>(80 * 60 * 3, 0);
-      return std::make_shared<const vision::FramePacket>(core::CapturedFrame(core::Stamp(id, 1, time),
-        core::Image(80, 60, 240, bytes), time, core::TimeOrigin::synthetic,
-        core::Seconds(0), core::Evidence::missing()), std::nullopt);
+
+      return std::make_shared<const vision::FramePacket>(
+          core::CapturedFrame(core::Stamp(id, 1, time), core::Image(80, 60, 240, bytes), time,
+                              core::TimeOrigin::synthetic, core::Seconds(0),
+                              core::Evidence::missing()),
+          std::nullopt);
     };
+
+    const auto synchronous = detector.detect(*make_packet(99));
     auto first = make_packet(100);
     std::weak_ptr<const vision::FramePacket> retained = first;
     CHECK(detector.try_submit(first));
@@ -26,14 +36,21 @@ int main(int argc, char** argv) {
     CHECK(detector.prepared_bytes() == 2 * 640 * 640 * 3);
     std::set<std::uint64_t> ids;
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+
     while (detector.in_flight() && std::chrono::steady_clock::now() < deadline) {
       auto completed = detector.take_completed();
+
       if (completed) {
         CHECK(!completed->failure && completed->detections);
+        CHECK(completed->detections->timing.measured);
+        CHECK(completed->detections->timing.inference_wall_ms >= 0);
+        CHECK(completed->detections->detections.size() == synchronous.detections.size());
         CHECK(completed->packet->frame.stamp.frame_id == completed->detections->source.frame_id);
         ids.insert(completed->detections->source.frame_id);
-      } else std::this_thread::yield();
+      } else
+        std::this_thread::yield();
     }
+
     CHECK(ids == std::set<std::uint64_t>({100, 101}));
     CHECK(retained.expired() && detector.in_flight() == 0);
     CHECK(detector.try_submit(make_packet(103)));

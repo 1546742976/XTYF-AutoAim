@@ -4,6 +4,7 @@
 
 int main() {
   using namespace autoaim;
+
   return test::run([] {
     hal::ReplayClock clock(core::TimePoint(0, core::ClockDomain::replay));
     clock.advance(core::Seconds(0.1));

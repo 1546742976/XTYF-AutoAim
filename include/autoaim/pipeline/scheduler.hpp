@@ -21,9 +21,14 @@ public:
   void start(std::vector<Worker> workers, FailureHandler on_failure);
   void request_stop() noexcept;
   void stop();
-  bool stopping() const noexcept { return stopping_.load(); }
+
+  bool stopping() const noexcept {
+    return stopping_.load();
+  }
+
   std::exception_ptr failure() const;
   std::exception_ptr cleanup_failure() const;
+
 private:
   void record_failure(std::exception_ptr error);
   std::atomic<bool> stopping_{false};
@@ -36,4 +41,4 @@ private:
   bool started_ = false;
   bool closed_ = false;
 };
-}  // namespace autoaim::pipeline
+} // namespace autoaim::pipeline

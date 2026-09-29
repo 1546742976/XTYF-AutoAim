@@ -6,6 +6,7 @@ int main() {
   using namespace autoaim::core;
   static_assert(!std::is_default_constructible_v<Stamp>);
   static_assert(!std::is_assignable_v<Stamp&, Stamp>);
+
   return test::run([] {
     const Stamp stamp(10, 2, TimePoint(100, ClockDomain::replay));
     const auto copy = stamp;

@@ -14,12 +14,17 @@ public:
   SerialTransport& operator=(const SerialTransport&) = delete;
   core::Result<bool> open_device();
   void close_device() noexcept;
-  bool is_open() const { return fd_ >= 0; }
+
+  bool is_open() const {
+    return fd_ >= 0;
+  }
+
   WriteResult write_all(const std::vector<std::uint8_t>& bytes, core::Seconds timeout) override;
   core::Result<std::vector<std::uint8_t>> read_for(core::Seconds timeout) override;
+
 private:
   std::string device_;
   unsigned baud_;
   int fd_ = -1;
 };
-}  // namespace autoaim::hal
+} // namespace autoaim::hal

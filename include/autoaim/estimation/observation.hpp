@@ -30,6 +30,8 @@ struct Observation {
 // additional_covariance 是外参/历史姿态等在板中心处、世界系下的附加误差协方差。
 // 不从配置声明制造零噪声实测事实；调用者须显式提供其评估值。
 core::Result<Observation> make_observation(const vision::FramePacket& frame,
-    const vision::Detection& detection, const vision::PnpEstimate& estimate,
-    const vision::Calibration& calibration, const vision::PoseCovariance& additional_covariance);
-}  // namespace autoaim::estimation
+                                           const vision::Detection& detection,
+                                           const vision::PnpEstimate& estimate,
+                                           const vision::Calibration& calibration,
+                                           const vision::PoseCovariance& additional_covariance);
+} // namespace autoaim::estimation

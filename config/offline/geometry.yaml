@@ -1,0 +1,12 @@
+# 仅合成四板等高、竖直转轴；三种布局和倾斜轴的组合另有合成单元测试。
+geometry:
+  id: synthetic-four-plate
+  layout: same
+  plate_count: 4
+  axis_to_world_wxyz: [1, 0, 0, 0]
+  calibrated: true
+  plates:
+    - {offset_m: [0.25, 0, 0], plate_to_axis_wxyz: [0.5, 0.5, 0.5, 0.5], width_m: 0.135, height_m: 0.055}
+    - {offset_m: [0, 0.25, 0], plate_to_axis_wxyz: [0, 0, 0.7071067811865476, 0.7071067811865476], width_m: 0.135, height_m: 0.055}
+    - {offset_m: [-0.25, 0, 0], plate_to_axis_wxyz: [-0.5, -0.5, 0.5, 0.5], width_m: 0.135, height_m: 0.055}
+    - {offset_m: [0, -0.25, 0], plate_to_axis_wxyz: [-0.7071067811865476, -0.7071067811865476, 0, 0], width_m: 0.135, height_m: 0.055}

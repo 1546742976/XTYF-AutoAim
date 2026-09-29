@@ -1,0 +1,3 @@
+# 没有编造设备标定或控制通道；当前 CLI 必须拒绝本配置。
+execution: hardware
+reason: Device calibration, operator input and firmware authority mapping require measured evidence.

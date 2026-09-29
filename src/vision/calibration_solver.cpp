@@ -1,4 +1,5 @@
 #include "autoaim/vision/calibration_solver.hpp"
+#include "autoaim/core/fingerprint.hpp"
 #include "calibration_quality.hpp"
 #include <opencv2/calib3d.hpp>
 #include <set>
@@ -68,7 +69,7 @@ double reprojection_rms(const std::vector<cv::Point3f>& objects,
 namespace calibration_detail {
 std::string point_fingerprint(const std::vector<cv::Point2f>& points) {
   static_assert(sizeof(float) == 4 && std::numeric_limits<float>::is_iec559);
-  std::uint64_t hash = 14695981039346656037ULL;
+  core::Fingerprint fingerprint;
 
   for (const auto& point : points)
     for (float value : {point.x, point.y}) {
@@ -76,15 +77,15 @@ std::string point_fingerprint(const std::vector<cv::Point2f>& points) {
         value = 0; // +0/-0 表示同一位置。
       std::uint32_t bits;
       std::memcpy(&bits, &value, sizeof(bits));
-      for (int byte = 0; byte < 4; ++byte) {
-        hash ^= (bits >> (byte * 8)) & 0xffU;
-        hash *= 1099511628211ULL;
-      }
+      const unsigned char bytes[] = {static_cast<unsigned char>(bits),
+          static_cast<unsigned char>(bits >> 8), static_cast<unsigned char>(bits >> 16),
+          static_cast<unsigned char>(bits >> 24)};
+      fingerprint.append(bytes, sizeof(bytes));
     }
 
   std::ostringstream result;
   result.imbue(std::locale::classic());
-  result << std::hex << std::setw(16) << std::setfill('0') << hash << ':' << std::dec
+  result << std::hex << std::setw(16) << std::setfill('0') << fingerprint.value() << ':' << std::dec
          << points.size() * 8;
 
   return result.str();

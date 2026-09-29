@@ -1,4 +1,5 @@
 #include "autoaim/pipeline/offline_tools.hpp"
+#include "autoaim/core/fingerprint.hpp"
 #include "autoaim/hal/session_writer.hpp"
 #include "../../src/pipeline/session_annotation.hpp"
 #include "test_support.hpp"
@@ -18,8 +19,69 @@ int main() {
   namespace detail = pipeline::annotation_detail;
 
   return test::run([] {
+    core::Fingerprint empty;
+    CHECK(empty.value() == 0xcbf29ce484222325ULL);
+    CHECK(empty.bytes() == 0);
+    empty.append(nullptr, 0);
+    CHECK(empty.value() == 0xcbf29ce484222325ULL);
+    CHECK(empty.bytes() == 0);
+
+    core::Fingerprint known;
+    known.append("foobar", 6);
+    CHECK(known.value() == 0x85944171f73967e8ULL);
+    CHECK(known.bytes() == 6);
+    core::Fingerprint split;
+    split.append("foo", 3);
+    split.append(nullptr, 0);
+    split.append("bar", 3);
+    CHECK(split.value() == known.value());
+    CHECK(split.bytes() == 6);
+
+    const unsigned char high_bytes[] = {0x00, 0x80, 0xff, 0x41};
+    core::Fingerprint high;
+    high.append(high_bytes, sizeof(high_bytes));
+    CHECK(high.value() == 0xf8e5f57d2a3a01d5ULL);
+    CHECK(high.bytes() == 4);
+
     detail::OutputDirectory sandbox(std::filesystem::temp_directory_path() / "annotation-unit");
     const auto root = sandbox.path();
+    std::string boundary_bytes(65537, '\0');
+    for (std::size_t i = 0; i < boundary_bytes.size(); ++i)
+      boundary_bytes[i] = static_cast<char>((i * 37 + 11) & 255);
+    struct FileCase {
+      std::size_t bytes;
+      const char* hash;
+    };
+    // 固定摘要由独立整数实现计算，覆盖 read/gcount 的 64 KiB 边界。
+    const FileCase file_cases[] = {{0, "cbf29ce484222325"}, {65535, "49d1bbcaa0336b21"},
+        {65536, "a2cde04e37602325"}, {65537, "03f752e8185bc72a"}};
+    for (const auto& item : file_cases) {
+      detail::write_bytes(root / "fingerprint.bin", boundary_bytes.substr(0, item.bytes));
+      const auto fingerprint = detail::file_fingerprint(root / "fingerprint.bin", "blob");
+      CHECK(fingerprint["path"].as<std::string>() == "blob");
+      CHECK(fingerprint["bytes"].as<std::uint64_t>() == item.bytes);
+      CHECK(fingerprint["fnv1a64"].as<std::string>() == item.hash);
+    }
+
+    const auto fixed = root / "fingerprint-set";
+    CHECK(std::filesystem::create_directory(fixed));
+    detail::write_bytes(fixed / "frame.bin",
+        std::string(reinterpret_cast<const char*>(high_bytes), sizeof(high_bytes)));
+    detail::write_bytes(fixed / "events.yaml",
+        "events:\n  - {kind: image, path: ./frame.bin}\n"
+        "  - {kind: image, path: frame.bin}\n");
+    const auto fixed_fingerprint = detail::dataset_fingerprint(fixed / "events.yaml");
+    CHECK(fixed_fingerprint["algorithm"].as<std::string>() == "fnv1a64-length-prefixed-v1");
+    CHECK(fixed_fingerprint["fnv1a64"].as<std::string>() == "aa7de4a1369b4d99");
+    const auto fixed_files = fixed_fingerprint["files"];
+    CHECK(fixed_files.size() == 2);
+    CHECK(fixed_files[0]["path"].as<std::string>() == "image/frame.bin");
+    CHECK(fixed_files[0]["bytes"].as<std::uint64_t>() == 4);
+    CHECK(fixed_files[0]["fnv1a64"].as<std::string>() == "f8e5f57d2a3a01d5");
+    CHECK(fixed_files[1]["path"].as<std::string>() == "manifest/events.yaml");
+    CHECK(fixed_files[1]["bytes"].as<std::uint64_t>() == 80);
+    CHECK(fixed_files[1]["fnv1a64"].as<std::string>() == "5f90348620844bb5");
+
     const auto input = root / "source";
     hal::SessionWriter writer(input, {"unit", "v1", std::nullopt});
     for (int id = 1; id <= 3; ++id) {

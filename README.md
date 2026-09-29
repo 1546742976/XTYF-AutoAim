@@ -267,6 +267,9 @@ YOLO11 使用自己的 38 类映射，不能套用 YOLOv5 的裸整数。v5 的 
 
 各工具可执行 `--help`。以下使用 `/path/...` 的命令是待填写路径的模板：
 
+标定与批量评测共用文本 YAML 写出，保留 double 精度 17、末尾换行和写出失败诊断；
+标注工具仍使用自身的 float 精度 9 与二进制写出，详见[手册中的工具职责](additional_information.md#module-pipeline)。
+
 ```bash
 # PnP 自检：程序生成已知姿态的角点，不需要外部角点文件
 build-debug/calibration_tool --config config/offline/armor.yaml --self-test
@@ -363,6 +366,8 @@ build-debug/bench_detector --dataset /path/new-labeled-session/events.yaml \
 
 审核绑定同时核验输出事件/PNG、提交文件及嵌入标注。数据指纹采用 FNV-1a64 与字节数，
 集合采用长度前缀编码；它能定位内容变化，**不是签名，也不证明人工标签正确**。
+文件摘要字段 `fnv1a64` 和集合算法 `fnv1a64-length-prefixed-v1` 保持既有格式；
+共享字节累计的范围与各用途编码见[手册 core 职责](additional_information.md#module-core)。
 没有来源 sidecar 的旧数据仍可评测，报告审核字段为 null；存在但不匹配的 sidecar 会拒绝评测。
 `reviewed: true` 只是人工审核声明，不会授予控制能力或影响置信度、阈值和最终 shoot。
 
@@ -439,7 +444,6 @@ CRC 初值 0xFFFF、反射多项式 0x8408、无末尾异或。默认停止包�
 | [tests/fixtures/](tests/fixtures/)、[tests/support/](tests/support/) | 固定输入文件与测试替身/数据构造，不是生产设备参数 |
 | [tests/test_support.hpp](tests/test_support.hpp) | 轻量测试检查工具，Release 不会因 assert 被关闭而跳过检查 |
 
-`tests/replay/test_replay_pipeline.cpp`、`tests/fault_injection/test_fault_injection.cpp`、
 `tests/synthetic/test_ekf_synthetic.cpp` 仍是空预留；实际相关测试分布在上表目录。
 **是否参与测试以 CMake 的注册为准，不以文件名或文件存在为准。**
 

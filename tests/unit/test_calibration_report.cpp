@@ -1,11 +1,20 @@
 #include "autoaim/vision/calibration_report.hpp"
 #include "support/calibration_fixture.hpp"
+#include "../../src/vision/calibration_quality.hpp"
 #include "test_support.hpp"
 
 int main() {
   using namespace autoaim;
 
   return test::run([] {
+    CHECK(vision::calibration_detail::point_fingerprint({}) == "cbf29ce484222325:0");
+    const std::vector<cv::Point2f> points{{0, 0}, {1, 2.5F}, {123.25F, 0.125F}};
+    CHECK(vision::calibration_detail::point_fingerprint(points) == "a8998fd56c1dbaa2:24");
+    auto negative_zero = points;
+    negative_zero[0] = {-0.0F, -0.0F};
+    CHECK(vision::calibration_detail::point_fingerprint(negative_zero) ==
+          "a8998fd56c1dbaa2:24");
+
     const auto data = test::calibration_dataset();
     const auto solution = vision::solve_intrinsics(data);
     const vision::Calibration calibration(solution.image_size.width, solution.image_size.height,

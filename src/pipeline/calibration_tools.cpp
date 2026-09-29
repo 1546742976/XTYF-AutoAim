@@ -2,7 +2,7 @@
 #include "autoaim/pipeline/bootstrap.hpp"
 #include <opencv2/calib3d.hpp>
 #include "autoaim/vision/calibration_report.hpp"
-#include <fstream>
+#include "yaml_output.hpp"
 #include <iostream>
 #include <set>
 
@@ -148,15 +148,7 @@ void write_yaml(const std::filesystem::path& path, const YAML::Node& node) {
   if (std::filesystem::exists(path))
     throw std::invalid_argument("Refusing to overwrite calibration output");
 
-  YAML::Emitter emitter;
-  emitter.SetDoublePrecision(17);
-  emitter << node;
-  std::ofstream output(path);
-  output << emitter.c_str() << '\n';
-  output.flush();
-
-  if (!emitter.good() || !output)
-    throw std::runtime_error("Cannot write calibration output");
+  yaml_detail::write_text(path, node, "Cannot write calibration output");
 }
 
 vision::IntrinsicSolution read_intrinsics(const core::Config& c) {

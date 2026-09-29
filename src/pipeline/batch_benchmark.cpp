@@ -4,10 +4,10 @@
 #include "autoaim/hal/recording_transport.hpp"
 #include "autoaim/pipeline/run_metadata.hpp"
 #include "session_annotation.hpp"
+#include "yaml_output.hpp"
 #include "autoaim_build_information.hpp"
 #include <algorithm>
 #include <chrono>
-#include <fstream>
 #include <iostream>
 #include <streambuf>
 
@@ -157,16 +157,6 @@ std::map<core::FrameId, LabeledFrame> labels(const DatasetFacts& facts,
   return frames;
 }
 
-void write_yaml(const std::filesystem::path& path, const YAML::Node& node) {
-  YAML::Emitter emitter;
-  emitter.SetDoublePrecision(17);
-  emitter << node;
-  std::ofstream output(path);
-  output << emitter.c_str() << '\n';
-  output.flush();
-  if (!emitter.good() || !output)
-    throw std::runtime_error("Cannot write evaluation report");
-}
 } // namespace
 
 int run_batch_benchmark(int argc, char** argv) {
@@ -328,8 +318,8 @@ int run_batch_benchmark(int argc, char** argv) {
       throw std::runtime_error("Dataset changed during benchmark");
     if (!std::filesystem::create_directory(output))
       throw std::invalid_argument("Evaluation output directory already exists");
-    write_yaml(output / "report.yaml", report);
-    write_yaml(output / "timing.yaml", costs);
+    yaml_detail::write_text(output / "report.yaml", report, "Cannot write evaluation report");
+    yaml_detail::write_text(output / "timing.yaml", costs, "Cannot write evaluation report");
     std::cout << "Compared " << configurations.size() << " configurations; report="
               << (output / "report.yaml").string()
               << "\nLocal measurements only; not NUC acceptance.\n";

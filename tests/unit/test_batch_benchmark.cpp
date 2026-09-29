@@ -4,9 +4,11 @@
 #include "autoaim/vision/calibration_report.hpp"
 #include "support/calibration_fixture.hpp"
 #include "../../src/pipeline/session_annotation.hpp"
+#include "../../src/pipeline/yaml_output.hpp"
 #include "test_support.hpp"
 #include <chrono>
 #include <fstream>
+#include <sstream>
 
 int main(int argc, char** model_paths) {
   using namespace autoaim;
@@ -24,6 +26,42 @@ int main(int argc, char** model_paths) {
         std::filesystem::remove_all(path);
       }
     } cleanup{directory};
+
+    const auto text_path = directory / "text.yaml";
+    YAML::Node text_node;
+    text_node["value"] = 1.0 / 3.0;
+    text_node["count"] = 42;
+#ifdef _WIN32
+    constexpr const char* text_bytes = "value: 0.33333333333333331\r\ncount: 42\r\n";
+    constexpr const char* empty_bytes = "[]\r\n";
+#else
+    constexpr const char* text_bytes = "value: 0.33333333333333331\ncount: 42\n";
+    constexpr const char* empty_bytes = "[]\n";
+#endif
+    pipeline::yaml_detail::write_text(text_path, text_node, "Cannot write evaluation report");
+    CHECK(pipeline::annotation_detail::read_bytes(text_path) == text_bytes);
+    pipeline::yaml_detail::write_text(text_path, YAML::Load("[]"),
+                                      "Cannot write evaluation report");
+    CHECK(pipeline::annotation_detail::read_bytes(text_path) == empty_bytes);
+    const auto write_fails = [&](const std::filesystem::path& path, const char* message) {
+      bool failed = false;
+      try {
+        pipeline::yaml_detail::write_text(path, text_node, message);
+      } catch (const std::runtime_error& error) {
+        CHECK(std::string(error.what()) == message);
+        failed = true;
+      }
+      CHECK(failed);
+    };
+    for (const auto* message : {"Cannot write calibration output",
+                                "Cannot write evaluation report"}) {
+      write_fails(directory / "missing-parent/text.yaml", message);
+      CHECK(!std::filesystem::exists(directory / "missing-parent"));
+      write_fails(directory, message);
+#ifdef __linux__
+      write_fails("/dev/full", message);
+#endif
+    }
 
     // 报告文件单独变化也必须可追溯；记录的是已装载证据，而非看到文件就授予资格。
     const auto data = test::calibration_dataset();
@@ -147,7 +185,17 @@ int main(int argc, char** model_paths) {
     CHECK(report["build"]["source_sha256"].as<std::string>().size() == 64);
     CHECK(report["build"]["compiler"].as<std::string>().size() > 0);
     CHECK(report["build"]["opencv_version"].as<std::string>().size() > 0);
-    CHECK(pipeline::run_detector_benchmark(int(argv.size()), argv.data()) == 1);
+    const auto report_bytes = detail::read_bytes(directory / "comparison/report.yaml");
+    const auto timing_bytes = detail::read_bytes(directory / "comparison/timing.yaml");
+    std::ostringstream diagnostics;
+    auto* previous_stderr = std::cerr.rdbuf(diagnostics.rdbuf());
+    const int repeated = pipeline::run_detector_benchmark(int(argv.size()), argv.data());
+    std::cerr.rdbuf(previous_stderr);
+    CHECK(repeated == 1);
+    CHECK(diagnostics.str() ==
+          "batch benchmark: Configurations/dataset/new output directory required\n");
+    CHECK(detail::read_bytes(directory / "comparison/report.yaml") == report_bytes);
+    CHECK(detail::read_bytes(directory / "comparison/timing.yaml") == timing_bytes);
 
     const auto run = [](std::vector<std::string> values, bool annotation = false) {
       std::vector<char*> pointers;

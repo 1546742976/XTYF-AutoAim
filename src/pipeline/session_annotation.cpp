@@ -1,5 +1,6 @@
 #include "session_annotation.hpp"
 #include "autoaim/core/config.hpp"
+#include "autoaim/core/fingerprint.hpp"
 #include "autoaim/hal/file_replay.hpp"
 #include "autoaim/vision/annotation.hpp"
 #include <algorithm>
@@ -22,18 +23,7 @@
 namespace autoaim::pipeline::annotation_detail {
 namespace fs = std::filesystem;
 namespace {
-struct Fingerprint {
-  std::uint64_t hash = 14695981039346656037ull;
-  std::uint64_t bytes = 0;
-
-  void append(const char* data, std::size_t size) {
-    for (std::size_t i = 0; i < size; ++i) {
-      hash ^= static_cast<unsigned char>(data[i]);
-      hash *= 1099511628211ull;
-    }
-    bytes += size;
-  }
-
+struct Fingerprint : core::Fingerprint {
   // 集合编码：每个字符串之前是固定 8 字节小端长度，避免路径/摘要拼接歧义。
   void field(const std::string& value) {
     std::array<char, 8> length{};
@@ -45,7 +35,7 @@ struct Fingerprint {
 
   std::string hex() const {
     std::ostringstream stream;
-    stream << std::hex << std::setw(16) << std::setfill('0') << hash;
+    stream << std::hex << std::setw(16) << std::setfill('0') << value();
 
     return stream.str();
   }
@@ -128,7 +118,7 @@ YAML::Node file_fingerprint(const fs::path& path, const std::string& name) {
     throw std::runtime_error("Fingerprint read failed: " + path.string());
   YAML::Node result;
   result["path"] = name;
-  result["bytes"] = digest.bytes;
+  result["bytes"] = digest.bytes();
   result["fnv1a64"] = digest.hex();
 
   return result;

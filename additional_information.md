@@ -60,6 +60,15 @@ apps → pipeline
 | [buffer_pool.hpp](include/autoaim/core/buffer_pool.hpp)、[buffer_pool.cpp](src/core/buffer_pool.cpp) | 固定容量图像内存池与租约；最后一个使用者释放后才能复用内存 |
 | [evidence.hpp](include/autoaim/core/evidence.hpp) | 区分缺失、声明、实测、模拟证据；配置里写 true 不能变成实测 |
 | [config.cpp](src/core/config.cpp)、[logging.cpp](src/core/logging.cpp) | 通用 YAML 读取/错误报告与基础日志；业务参数解释放在 bootstrap |
+| [fingerprint.hpp](include/autoaim/core/fingerprint.hpp) | 仅头文件 FNV-1a64 字节累计与 uint64 字节计数；路径、字符串编码和格式化由调用方负责 |
+
+文件来源与会话文件保持 binary、64 KiB 缓冲及 EOF/错误检查；图片去重逐行累计
+解码后的灰度像素，不包含行间 padding。标定点保持点序、x/y 顺序、IEEE754 检查、
+正负零归一和四字节小端编码，输出仍是 16 位小写十六进制加冒号、十进制字节数。
+会话集合继续在 pipeline 按规范化路径排序，每个字符串先写八字节小端长度，
+再写原始字节；文件长度的十进制字符串、摘要的十六进制字符串也按该规则参与累计。
+`fnv1a64`、`fnv1a64-length-prefixed-v1` 及各调用方 locale 行为保持不变；
+共享基元不解释这些格式，不增加长度前缀或字符串重载。
 
 <a id="module-math"></a>
 
@@ -199,8 +208,16 @@ YOLOv5 适配旧 22 列角点格式，YOLO11 适配输入 `1×3×640×640`、输
 | [entry.cpp](src/pipeline/entry.cpp) | 公共 CLI 参数、角色检查、TSV/会话/UART 记录输出；apps 只是它的薄入口 |
 | [offline_tools.cpp](src/pipeline/offline_tools.cpp)、[batch_benchmark.cpp](src/pipeline/batch_benchmark.cpp) | 单图检测计时与多配置整链评测；批量预读事实在一次调用内共享，不缓存像素 |
 | [calibration_tools.cpp](src/pipeline/calibration_tools.cpp)、[run_metadata.cpp](src/pipeline/run_metadata.cpp) | 标定工具 CLI 与运行配置/模型/标定内容标识；标定求解算法仍在 vision |
+| [yaml_output.hpp](src/pipeline/yaml_output.hpp) | 私有内联文本 YAML 写出，只供标定与批量评测共享；不承担覆盖策略或标注发布 |
 | [annotate_session.cpp](src/pipeline/annotate_session.cpp) | 离线标注导出、审核回看、整体替换应用与自检；只创建源会话外的新目录，不调用模型 |
 | [session_annotation.cpp](src/pipeline/session_annotation.cpp)、[私有头](src/pipeline/session_annotation.hpp) | 严格 v2 单行 flow 读取、数据指纹、审核绑定检查、独立 PNG 复制及 Linux 无覆盖原子发布；不成为公共 HAL 或运行时接口 |
+
+标定与评测的文本写出使用 DoublePrecision 17，保留默认 Float 精度、文本流、
+末尾换行与 flush，之后检查 emitter 和流。标定在调用前拒绝已存在文件，
+仍抛 `invalid_argument("Refusing to overwrite calibration output")`；写出失败分别为
+`Cannot write calibration output`、`Cannot write evaluation report`。
+CLI 对已存在输出目录的拒绝是另一层检查，不能与上述文件检查混同。
+标注独立保留 Double17/Float9、序列化前置检查与二进制写出；HAL 会话写出也不参与此共享。
 
 并发规则集中理解即可，不必在每个模块各实现一遍：
 
@@ -1065,6 +1082,10 @@ Pr{ 落点在有效装甲多边形内 | 当前观测 } ≥ η
 | 回放 | **复用在线处理链**，只替换输入、时钟与输出端；结果可复现 |
 | **契约** | 模式切换后的旧结果、乱序完成、异步缓冲区生命周期、工作线程异常、发送失败与关闭竞态；步兵辅助禁止程序开火、人工接管与明确重新启用 |
 | 故障注入 | 丢帧、坏帧、野值、CRC 位翻转、半包、未收敛 |
+
+这里的分层表示覆盖职责，不要求每层有独立同名目录。回放与故障场景已分布在
+现有单元、契约和合成测试中；删除未注册的空测试占位不代表删除这些覆盖。
+实际测试名称与数量以对应构建的 CTest 注册清单为准。
 
 已确认的控制模式验收应覆盖：辅助模式即使上游误提交开火请求也不能得到许可；自动模式中人工介入会撤销程序开火并使旧世代结果失效；人工松手不能自动恢复，明确重新启用仍须重新接受许可检查。
 

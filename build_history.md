@@ -10,6 +10,7 @@
 
 ## 阅读导航
 
+- [瘦身第 1、2 批（2026-09-30）](#slimming-20260930-v2)
 - [并行复核与专项验证（2026-09-30）](#并行复核与专项验证2026-09-30)
 - [测量闭环验收（2026-09-30）](#测量闭环验收2026-09-30)
 - [分批修复进度与续修矩阵（2026-09-30）](#分批修复进度2026-09-30)
@@ -17,6 +18,80 @@
 - [返回 README 测试说明](README.md#8-测试已验证范围与待完成项)
 
 ## 阶段记录
+
+<a id="slimming-20260930-v2"></a>
+
+### 瘦身第 1、2 批（2026-09-30）
+
+基线提交 `ebb046ffe233621b21f1cc44cee268096b272768`，开始时工作区干净。
+本轮仅删除两个空测试占位、共享两处文本 YAML 写出及四处 FNV 字节累计；
+保留 Frame 公共别名、OpenCV→SE3 转换、标注的独立写出语义及其他空预留。
+两名 GPT-6 Astra / Ultra 分别负责 YAML、FNV 和交叉复核；逐批落盘、验收。
+
+独立目录为 `out/slimming-20260930-v2/`，WSL Ubuntu 22.04、GCC 11.4、
+CMake 3.22.1、C++17 Debug，海康、ASan/UBSan、TSan 均 OFF。
+ON 配置使用 OpenVINO 2026.3.1 和已有 YOLOv5/YOLO11 XML/BIN；
+[模型摘要](out/slimming-20260930-v2/baseline/models.json)固定本次输入身份。
+两配置均在修改生产代码和测试前重新配置、构建并全量运行，不复用旧目录的通过记录。
+
+| 阶段 | 专项 | OFF 全量 / 编译单元 | ON 全量 / 编译单元 | 结果材料 |
+| --- | --- | --- | --- | --- |
+| 修改前基线 | — | 103/103；172 | 110/110；174 | [OFF](out/slimming-20260930-v2/baseline/off/ctest.log)、[ON](out/slimming-20260930-v2/baseline/on/ctest.log) |
+| 第 1 批 | 回放与故障相关 5/5 | 103/103；172 | 本批未重跑 | [专项](out/slimming-20260930-v2/batch1/off/targeted.log)、[全量](out/slimming-20260930-v2/batch1/off/ctest.log)、[差异](out/slimming-20260930-v2/batch1/changes.diff) |
+| 第 2a 批 | YAML/标定 CLI/标注/评测 4/4 | 103/103；172 | 本批未重跑 | [专项](out/slimming-20260930-v2/batch2a/off/targeted.log)、[全量](out/slimming-20260930-v2/batch2a/off/ctest.log)、[差异](out/slimming-20260930-v2/batch2a/changes.diff) |
+| 第 2b 批 / 最终状态 | FNV/标定/标注/评测 7/7 | 103/103；172 | 110/110；174 | [专项](out/slimming-20260930-v2/batch2b/off/targeted.log)、[OFF](out/slimming-20260930-v2/batch2b/off/ctest.log)、[ON](out/slimming-20260930-v2/batch2b/on/ctest.log)、[差异](out/slimming-20260930-v2/batch2b/changes.diff) |
+
+第 1 批再次确认 `tests/replay/test_replay_pipeline.cpp` 和
+`tests/fault_injection/test_fault_injection.cpp` 均为零字节且未注册后删除，
+仅移除随后为空的两个目录。生产来源摘要仍为
+`517753954cdad1e1e42f87303af6d1e9e16c379685c0ffae4273a5b63f173ba5`，
+测试文件清单仅少这两项，注册名称和公共头数量 79 均不变。
+固定产物全文与基线一致，见 [比较结果](out/slimming-20260930-v2/batch1/off/compatibility.json)。
+
+第 2a 批将标定与评测的文本 YAML 写出从两份合并为私有内联头一份，
+保留标定文件存在检查、两类错误原文和写出/flush/检查顺序；标注和 HAL 写出未动。
+现有测试增加实际 double 的 17 位固定字节、截断覆盖、缺父目录、目录目标和
+Linux `/dev/full` 失败断言，以及标定/评测 CLI 拒绝覆盖时的退出码、诊断与原文件保护。
+交叉复核修正了新测试的 Windows CRLF 预期，生产代码未因此改变；
+[首轮 Linux 记录](out/slimming-20260930-v2/batch2a/first-linux-off/ctest.log)保留，
+修正后重新通过上表专项和全量。Windows 分支仅静态核对，未在 Windows 运行测试。
+[私有头独立包含检查](out/slimming-20260930-v2/batch2a/first-linux-off/yaml-include.json)成功。
+[固定产物比较](out/slimming-20260930-v2/batch2a/off/compatibility.json)通过；
+报告仅两个生产来源标量变化，其余字节、两份标注 YAML、命令、UART14 和 CLI help 不变。
+
+第 2b 批将四份 FNV 字节循环合并到 core 头文件，文件读取、灰度逐行范围、
+点坐标小端编码/正负零归一和会话集合长度前缀/排序/字符串格式保留。
+现有测试增加空输入、已知向量、高位字节、分段和字节计数，
+65535/65536/65537 字节文件边界、固定集合摘要与精确点摘要；未改原有 golden。
+另一名同配置子智能体独立核算全部新常量并交叉复核，见[复核记录](out/slimming-20260930-v2/review_notes.md)。
+[公共头独立包含检查](out/slimming-20260930-v2/batch2b/off/core-include.json)通过。
+两配置注册名称、数量及编译单元数与各自基线一致；公共头由 79 增至 80，
+新私有头和公共头均进入生产清单，CMake 未修改。逐批来源/测试文件变更集合、
+当前文件与模型摘要均已核对，见[清单核验](out/slimming-20260930-v2/final-inventory-verification.json)。
+最终生产来源摘要为 `f71a361256bae4e67a4f8d0382e0b3ae8308ad8af00df45208f721e4846dae35`。
+最终 [OFF 产物](out/slimming-20260930-v2/batch2b/off/compatibility.json)与
+[ON 产物](out/slimming-20260930-v2/batch2b/on/compatibility.json)均满足上述字节兼容判据。
+本轮结果仅说明重复实现减少和所列兼容性验证通过，不作为速度、RSS 或二进制体积收益。
+
+固定样例在 WSL 原生 `/tmp/autoaim-slimming-20260930-v2/{off,on}` 运行，
+每次归档后只清理本轮创建的位置。每配置同一程序路径、工作目录、参数和输出路径
+重复两次；原始 YAML、回放 TSV、UART14 文本和墙钟 `timing.yaml` 均保留。
+`index.yaml`、`annotations.yaml`、命令与 UART 字节要求全文一致；
+`report.yaml` 同构建全文一致，跨生产改动仅允许两个 build 来源标量变化。
+比较副本只遮蔽 `source_inventory`、`source_sha256` 的原文区间，保留原始文件和完整差异。
+墙钟值单独归档，不用作性能收益结论。
+
+每阶段的 `before/after` 保存非忽略项目文件副本与 SHA-256，`changed.json` 和
+`changes.diff` 包含新增/删除文件；配置缓存、编译命令、CTest 注册、来源清单和
+各命令的退出码均在对应阶段目录。回退说明要求先核对当前摘要，保留后续编辑，
+本轮未执行回退、暂存或提交。材料在被忽略的 `out/` 下，不是新克隆的运行依赖。
+初次第 1 批测试启动时 WSL 将选择表达式误解析为管道，未启动 CMake；
+改为脚本内选择键后成功，见 [启动记录](out/slimming-20260930-v2/batch1/launch-error.json)。
+收尾发现本机驱动把 `manifest.json` 清单副本覆盖为同名命令日志；修正命名后，
+用已归档的原始报告 build 字段、源码快照、缓存和注册名单，通过仓库原核验器重建
+六份验收清单并逐项复核摘要，原命令另存 `manifest-command.json`。
+过程见[清单恢复记录](out/slimming-20260930-v2/manifest-recovery.json)；报告原件未重写，
+构建与测试通过记录仍来自实际执行日志。
 
 ### 并行复核与专项验证（2026-09-30）
 

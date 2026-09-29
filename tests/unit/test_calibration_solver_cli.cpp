@@ -3,6 +3,8 @@
 #include "test_support.hpp"
 #include <chrono>
 #include <fstream>
+#include <iterator>
+#include <sstream>
 
 int main() {
   using namespace autoaim;
@@ -60,7 +62,22 @@ int main() {
     const auto report = YAML::LoadFile((root / "result/intrinsic-report.yaml").string());
     CHECK(report["validation_ids"].size() == 4);
     CHECK(report["source_kind"].as<std::string>() == "synthetic");
-    CHECK(pipeline::run_calibration_tool(int(argv.size()), argv.data()) == 1);
+    const auto read_bytes = [](const std::filesystem::path& path) {
+      std::ifstream input(path, std::ios::binary);
+      CHECK(input.good());
+
+      return std::string(std::istreambuf_iterator<char>(input), {});
+    };
+    const auto intrinsic_bytes = read_bytes(root / "result/intrinsics.yaml");
+    const auto report_bytes = read_bytes(root / "result/intrinsic-report.yaml");
+    std::ostringstream diagnostics;
+    auto* previous_stderr = std::cerr.rdbuf(diagnostics.rdbuf());
+    const int repeated = pipeline::run_calibration_tool(int(argv.size()), argv.data());
+    std::cerr.rdbuf(previous_stderr);
+    CHECK(repeated == 1);
+    CHECK(diagnostics.str() == "calibration: Calibration output directory must not exist\n");
+    CHECK(read_bytes(root / "result/intrinsics.yaml") == intrinsic_bytes);
+    CHECK(read_bytes(root / "result/intrinsic-report.yaml") == report_bytes);
 
     // 独立手眼数据使用刚求得的内参投影，验证 CLI 的方向、文件复制与报告导入。
     cv::Matx33d matrix;

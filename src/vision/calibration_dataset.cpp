@@ -1,4 +1,5 @@
 #include "autoaim/vision/calibration_solver.hpp"
+#include "autoaim/core/fingerprint.hpp"
 #include <opencv2/calib3d.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
@@ -105,13 +106,10 @@ CalibrationDataset load_calibration_dataset(const std::filesystem::path& manifes
         throw std::invalid_argument("Mixed calibration image dimensions");
 
       // 对实际解码的灰度像素去重：改文件名或 PNG 编码不构成独立验证样本。
-      std::uint64_t hash = 14695981039346656037ULL;
+      core::Fingerprint fingerprint;
       for (int row = 0; row < image.rows; ++row)
-        for (int col = 0; col < image.cols; ++col) {
-          hash ^= image.ptr<std::uint8_t>(row)[col];
-          hash *= 1099511628211ULL;
-        }
-      if (!image_contents.insert(hash).second)
+        fingerprint.append(image.ptr<std::uint8_t>(row), static_cast<std::size_t>(image.cols));
+      if (!image_contents.insert(fingerprint.value()).second)
         throw std::invalid_argument("Same decoded image reused across calibration samples");
 
       const cv::Size pattern(data.board.columns, data.board.rows);

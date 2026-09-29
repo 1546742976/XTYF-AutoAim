@@ -1,5 +1,7 @@
 #include "autoaim/pipeline/run_metadata.hpp"
+#include "autoaim/core/fingerprint.hpp"
 #include "autoaim/pipeline/pipeline.hpp"
+#include <array>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -10,23 +12,17 @@ YAML::Node describe_file(const std::filesystem::path& path) {
   std::ifstream input(path, std::ios::binary);
   if (!input)
     throw std::invalid_argument("Cannot read run provenance file: " + path.string());
-  std::uint64_t hash = 14695981039346656037ull;
+  core::Fingerprint fingerprint;
   std::array<char, 65536> buffer;
-  std::uint64_t bytes = 0;
-  while (input.read(buffer.data(), buffer.size()) || input.gcount()) {
-    for (std::streamsize i = 0; i < input.gcount(); ++i) {
-      hash ^= static_cast<unsigned char>(buffer[std::size_t(i)]);
-      hash *= 1099511628211ull;
-    }
-    bytes += std::uint64_t(input.gcount());
-  }
+  while (input.read(buffer.data(), buffer.size()) || input.gcount())
+    fingerprint.append(buffer.data(), static_cast<std::size_t>(input.gcount()));
   if (!input.eof())
     throw std::runtime_error("Run provenance file read failed");
   std::ostringstream digest;
-  digest << std::hex << std::setw(16) << std::setfill('0') << hash;
+  digest << std::hex << std::setw(16) << std::setfill('0') << fingerprint.value();
   YAML::Node node;
   node["path"] = std::filesystem::absolute(path).string();
-  node["bytes"] = bytes;
+  node["bytes"] = fingerprint.bytes();
   node["fnv1a64"] = digest.str();
 
   return node;

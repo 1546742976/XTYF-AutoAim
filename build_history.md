@@ -4,18 +4,57 @@
 构建、运行与测试命令见 [README](README.md#2-编译并跑通第一个示例)；
 模块详解、技术契约和实施历史见 [详细手册](additional_information.md)。
 
-以下内容按原阶段保留。测试数字只对应记录中的源码阶段、工具链和构建选项，
-不代表当前工作区已重新验证；本次文档迁移没有重新运行构建或测试。
+以下内容按阶段保留。测试数字只对应记录中的源码阶段、工具链和构建选项，
+不代表当前工作区已重新验证；文档整理本身不产生新的构建或测试通过记录。
 离线验证、SDK 编译与实机验收的边界不变，未验收项仍按原记录保留。
 
 ## 阅读导航
 
+- [并行复核与专项验证（2026-09-30）](#并行复核与专项验证2026-09-30)
 - [测量闭环验收（2026-09-30）](#测量闭环验收2026-09-30)
 - [分批修复进度与续修矩阵（2026-09-30）](#分批修复进度2026-09-30)
 - [历史完整矩阵（2026-09-29）](#历史完整矩阵2026-09-29)
 - [返回 README 测试说明](README.md#8-测试已验证范围与待完成项)
 
 ## 阶段记录
+
+### 并行复核与专项验证（2026-09-30）
+
+取证基线为 `ea4982c`，改动归因范围为 `d217004 → 59ee160 → ea4982c`。
+两名 GPT-6 Astra / Ultra 子智能体分别核查既有改动与观察项，前者随后核查模型资料；
+主线程执行离线验证并汇总。在本次检查范围内未发现可确证的新错误，未形成生产代码
+修复包。取证阶段未修改生产源码、正式测试或运行配置，也未新增持久回归覆盖。
+
+WSL Ubuntu 22.04，C++17 Debug、OpenVINO OFF、海康后端 OFF；复用
+`out/repair-20260930-v1/debug`，先核对源码与测试指纹，再执行增量构建和专项测试：
+
+| 检查 | 本阶段结果 | 证据 |
+| --- | --- | --- |
+| 构建来源 | 生产源码及测试/夹具指纹与上一轮验收一致；CTest 注册数仍为 103 | [指纹摘要](out/audit-parallel-20260930-v1/source-verification.json) |
+| Debug 增量构建 | 退出码 0 | [命令](out/audit-parallel-20260930-v1/debug-incremental-build.json)、[输出](out/audit-parallel-20260930-v1/debug-incremental-build.log) |
+| 既有针对性测试 | **30/30 通过**，覆盖 PnP/标定、标注评测、跟踪决策、队列及配置等相关路径 | [命令与测试选择](out/audit-parallel-20260930-v1/targeted-tests.json)、[输出](out/audit-parallel-20260930-v1/targeted-tests.log) |
+| 临时审计探针 | **9/9 检查通过**；未注册进 CTest | [探针源码](out/audit-parallel-20260930-v1/observation_probe.cpp)、[编译命令](out/audit-parallel-20260930-v1/probe-compile.json)、[运行命令](out/audit-parallel-20260930-v1/probe-run.json)、[输出](out/audit-parallel-20260930-v1/probe-run.log) |
+| TSan 单项复验 | `test_frame_queue` 退出码 66，`unexpected memory mapping`；**未验收** | [命令](out/audit-parallel-20260930-v1/tsan-frame-queue.json)、[错误](out/audit-parallel-20260930-v1/tsan-frame-queue.log) |
+| 多配置环境 | 当前 WSL 无 Ninja，未进行多配置验收，未安装依赖 | [环境记录](out/audit-parallel-20260930-v1/environment.json) |
+
+临时探针确认：容量恰为 8 时接受并建立 8 个假设，容量为 7 时拒绝，同帧四条观测
+不再乘入初始化容量；预测拒绝后的重建分别可返回 `failure`、`success(false)` 与
+`success(true)`；指定额外拼错键被忽略，缺少正确必需键则拒绝；指定三灯图可产生
+三种配对。上述结果限定于夹具输入，不证明有效融合、真实精度或多配对构成缺陷。
+
+复核同时更正了观察项表述：生产路径已有事件与诊断输出；精修失败的
+`corners_reliable=false` 仍传入 PnP；相机接口明确要求同一采集/生命周期线程串行调用，
+不能因没有内部锁就认定同步缺陷。HAL 生产装配仍未完成。
+
+历史两套 XML/BIN 的文件身份已核对，历史 YOLO11 的 38 类与当前字典一致，包含
+类别 24/28 的紫色大/小基地。拟部署版本、预处理资料差异及网络关键点物理端点仍待核验，
+见 [历史模型清单](out/audit-parallel-20260930-v1/model-inventory.json)。本阶段未运行模型、
+设备或完整多构建矩阵，不作 NUC FPS、延迟、RSS 或真实精度结论；历史五项 TSan
+失败与本阶段单项复验分别记录，普通并发测试通过不替代线程检查。
+
+完整定级、资料缺口与验收条件见 [并行取证报告](out/audit-parallel-20260930-v1/REPORT.md)。
+上述 `out/` 材料是本机证据，不作为新克隆仓库的运行依赖。本次追加日志仅修改本文档，
+未为文档更新重新运行构建或测试，未暂存或提交 Git。
 
 ### 测量闭环验收（2026-09-30）
 

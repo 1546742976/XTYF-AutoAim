@@ -56,7 +56,8 @@ struct PnpQualityOptions {
   double minimum_edge_px;
   double minimum_view_cosine;
   double ambiguity_rms_gap_px;
-  double pixel_sigma_px;
+  double pixel_sigma_px; // 基础像素噪声；按分数、视角与角点可靠性缩放的局部启发式。
+  // 未列归一化的 J^T J 最小/最大特征值比，含 m/rad 单位，不能与标定质量比混用。
   double minimum_information_ratio;
   core::Metres prior_position_gate;
   core::Radians prior_rotation_gate;

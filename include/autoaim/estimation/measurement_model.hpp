@@ -9,7 +9,7 @@ enum class MeasurementKind { position, full_pose };
 
 struct LinearizedMeasurement {
   Eigen::VectorXd residual;
-  Eigen::MatrixXd jacobian;
+  Eigen::MatrixXd jacobian; // H = -∂residual/∂state，在当前非零残差处线性化。
   Eigen::MatrixXd noise;
 };
 

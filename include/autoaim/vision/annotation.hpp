@@ -23,4 +23,8 @@ struct ArmorAnnotation {
 
 // 仅解释标注，不产生运行时能力证据。[] 表示人工确认无目标，缺失节点不是 []。
 std::vector<ArmorAnnotation> read_annotations(const YAML::Node& node, cv::Size image_size);
+
+// 真值读取和直接评测共用：有限、四点互异且有非零有向面积；不重排角点。
+// 图内可见性由读取器单独校验，图外不可见角点仍可合法。
+void validate_annotation_corners(const std::array<cv::Point2f, 4>& corners);
 } // namespace autoaim::vision

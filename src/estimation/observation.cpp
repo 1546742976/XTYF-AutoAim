@@ -23,6 +23,15 @@ Observation::Observation(core::Stamp stamp, vision::Detection pixels, vision::Pn
       throw std::invalid_argument("Invalid observation covariance");
 }
 
+bool Observation::candidate_reliable(std::size_t index) const noexcept {
+  // pose_reliable 已包含本次标定、角点语义、消歧及原选解的视角/连续性检查。
+  // 没有针对改选解的完整证明时，不能用关联成功替代这些检查。
+  return reliable && pnp.selected && index == *pnp.selected &&
+         index < pnp.candidates.size() && pnp.candidates[index].geometry_accepted &&
+         pnp.candidates[index].covariance.has_value() &&
+         world_candidates[index].covariance.has_value();
+}
+
 core::Result<Observation> make_observation(const vision::FramePacket& frame,
                                            const vision::Detection& detection,
                                            const vision::PnpEstimate& estimate,

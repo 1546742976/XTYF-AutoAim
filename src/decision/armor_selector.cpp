@@ -20,6 +20,7 @@ void ArmorSelector::reset() {
   active_.reset();
   switched_at_.reset();
   last_source_.reset();
+  last_decision_.reset();
 }
 
 std::optional<std::size_t> ArmorSelector::select(const core::Stamp& source, std::uint64_t target_id,
@@ -31,12 +32,33 @@ std::optional<std::size_t> ArmorSelector::select(const core::Stamp& source, std:
     reset();
 
   if (last_source_ &&
-      (source.generation != last_source_->generation || source.frame_id <= last_source_->frame_id ||
+      (source.generation != last_source_->generation || source.frame_id < last_source_->frame_id ||
        source.exposure.domain() != last_source_->exposure.domain() ||
-       core::elapsed(source.exposure, last_source_->exposure).value() <= 0))
+       (source.frame_id == last_source_->frame_id
+            ? !core::same_time(source.exposure, last_source_->exposure)
+            : source.exposure.nanoseconds() <= last_source_->exposure.nanoseconds())))
     return std::nullopt;
 
+  if (candidates.empty()) {
+    last_source_.emplace(source);
+    active_.reset();
+
+    return std::nullopt;
+  }
+
+  const auto decision_at = candidates.front().estimated_send;
+  if (decision_at.domain() != source.exposure.domain() ||
+      decision_at.nanoseconds() < source.exposure.nanoseconds() ||
+      (last_decision_ && (decision_at.domain() != last_decision_->domain() ||
+                         decision_at.nanoseconds() <= last_decision_->nanoseconds())))
+    return std::nullopt;
+
+  for (const auto& candidate : candidates)
+    if (!core::same_time(candidate.estimated_send, decision_at))
+      return std::nullopt;
+
   last_source_.emplace(source);
+  last_decision_ = decision_at;
 
   if (!target_id || profile_id.empty() || !measured_aim.allFinite() || measured_aim.norm() <= 0 ||
       !gravity.allFinite()) {
@@ -95,12 +117,12 @@ std::optional<std::size_t> ArmorSelector::select(const core::Stamp& source, std:
 
   if (previous && *previous != *best &&
       (costs[*previous] - costs[*best] < options_.switch_margin ||
-       core::elapsed(source.exposure, *switched_at_).value() < options_.minimum_dwell.value()))
+       core::elapsed(decision_at, *switched_at_).value() < options_.minimum_dwell.value()))
     best = previous;
 
   if (!previous || *previous != *best) {
     active_ = Key{target_id, profile_id, candidates[*best].plate.physical_plate};
-    switched_at_ = source.exposure;
+    switched_at_ = decision_at;
   }
 
   return best;

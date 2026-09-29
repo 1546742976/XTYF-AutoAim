@@ -31,9 +31,22 @@ int main() {
     const auto result = solve(detection, options);
     CHECK(result.pose_valid && result.pose_reliable && !result.ambiguous);
     CHECK(math::covariance_valid(*result.candidates[*result.selected].covariance));
+    const auto baseline_covariance = *result.candidates[*result.selected].covariance;
+    auto twice_noise = options;
+    twice_noise.pixel_sigma_px *= 2;
+    auto lower_score = detection;
+    lower_score.confidence *= 0.5f;
+    const auto noisier = solve(detection, twice_noise);
+    const auto less_confident = solve(lower_score, options);
+    CHECK(noisier.selected && less_confident.selected);
+    CHECK(noisier.candidates[*noisier.selected].covariance->isApprox(4 * baseline_covariance));
+    CHECK(less_confident.candidates[*less_confident.selected].covariance->isApprox(
+        4 * baseline_covariance));
     auto untrusted = detection;
     untrusted.corners_reliable = false;
     CHECK(solve(untrusted, options).pose_valid && !solve(untrusted, options).pose_reliable);
+    const auto degraded = solve(untrusted, options);
+    CHECK(degraded.candidates[*degraded.selected].covariance->isApprox(4 * baseline_covariance));
     auto crossed = detection;
     std::swap(crossed.corners[1], crossed.corners[2]);
     CHECK(!solve(crossed, options).pose_valid);
@@ -61,5 +74,7 @@ int main() {
     ill_conditioned.minimum_information_ratio = 0.5;
     CHECK(solve(detection, ill_conditioned).pose_valid &&
           !solve(detection, ill_conditioned).pose_reliable);
+    const auto rejected = solve(detection, ill_conditioned);
+    CHECK(!rejected.candidates[*rejected.selected].covariance);
   });
 }

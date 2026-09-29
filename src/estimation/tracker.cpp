@@ -154,7 +154,8 @@ public:
       if (!current)
         continue;
 
-      // 同帧多个板共用姿态/标定误差，乘观测数给出保守界，不把这些误差当作独立重复测量。
+      // 固定线性化下，N*diag(R_i) 对含公共误差的联合噪声给出保守界。
+      // 此处逐次 EKF 会重新线性化，该界不构成非线性滤波普遍一致性的保证。
       current.value().noise *= assignments.size();
       auto report =
           hypothesis.filter.update(current.value(), options.nis.limit(measurement.dimension()));
@@ -310,12 +311,13 @@ core::Result<bool> Tracker::update(const ObservationBatch& observations) {
   }
 
   const auto& observation = *chosen.last_observation;
+  const bool selected_reliable = observation.candidate_reliable(chosen.last_candidate);
   constexpr int phase = component_index(StateComponent::phase);
-  data.state->observe(source, {true, observation.reliable, bool(identity), geometry_known, false,
+  data.state->observe(source, {true, selected_reliable, bool(identity), geometry_known, false,
                                chosen.filter.covariance()(phase, phase)});
 
   data.motion_selection->observe(source, chosen.filter.state().omega_radps,
-                                 bool(identity) && geometry_known && observation.reliable);
+                                 bool(identity) && geometry_known && selected_reliable);
 
   const auto motion =
       data.motion_selection->kind() == MotionKind::constant_velocity ? data.cv : data.ca;
@@ -329,7 +331,7 @@ core::Result<bool> Tracker::update(const ObservationBatch& observations) {
           return Result::failure(changed.error().code, changed.error().message);
       }
 
-  const bool reliable = observation.reliable && bool(identity) && geometry_known;
+  const bool reliable = selected_reliable && bool(identity) && geometry_known;
   data.last_snapshot = std::make_shared<const TargetSnapshot>(
       source, *data.state_time, data.target_id, chosen.filter.state(), chosen.filter.covariance(),
       identity ? std::optional<std::size_t>(chosen.last_plate) : std::nullopt,

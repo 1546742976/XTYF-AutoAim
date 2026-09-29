@@ -49,6 +49,37 @@ int main() {
       }
     }
 
+    // PnP 的可靠性只属于原选解；关联改选强侧视候选时不能继承该证明。
+    const core::Stamp changed(31, 1, core::TimePoint(620000000, core::ClockDomain::replay));
+    const auto original = test::observation(
+        *profile, changed, math::Point3<math::WorldFrame>({3.062, 0, 1}),
+        core::Radians(0.51), 2);
+    auto estimate = original->pnp;
+    const auto actual = original->world_candidates.front();
+    const math::SE3 distant(actual.plate_to_world.value().rotation(),
+                            actual.plate_to_world.value().translation() +
+                                Eigen::Vector3d(0, 5, 0));
+    estimate.candidates.front().plate_to_camera = vision::PlateToCamera(distant);
+    auto alternative = original->pnp.candidates.front();
+    alternative.view_cosine = 0.001;
+    alternative.rms_px = 2;
+    estimate.candidates.push_back(alternative);
+    const auto changed_observation = std::make_shared<const estimation::Observation>(
+        changed, original->detection, estimate,
+        std::vector<estimation::ObservedPose>{
+            {math::Transform<math::PlateFrame, math::WorldFrame>(distant), actual.covariance},
+            actual},
+        original->historical_pose, original->time_origin, original->timing_uncertainty,
+        original->timing_evidence);
+    CHECK(changed_observation->reliable);
+    CHECK(tracker.update({changed_observation}).value());
+    const auto changed_snapshot = tracker.snapshot(changed.exposure);
+    CHECK(changed_snapshot && changed_snapshot->physical_plate);
+    CHECK((changed_snapshot->visible_plate.plate_to_world.value().translation() -
+           actual.plate_to_world.value().translation()).norm() < 1e-8);
+    CHECK(!changed_snapshot->pose_reliable);
+    CHECK(changed_snapshot->quality != estimation::TrackingQuality::converged);
+
     CHECK(saved->source.frame_id == 20 && saved->state.phase.value() == saved_phase);
     CHECK(!tracker.snapshot(core::TimePoint(1000000000, core::ClockDomain::replay)));
 

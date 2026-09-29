@@ -108,7 +108,7 @@ struct Pipeline::Impl {
     pitch_smoother.emergency_stop(now);
   }
 
-  void decide() {
+  void decide(const core::Stamp& completed) {
     const auto now = clock->now();
     const auto state = current_context();
 
@@ -175,6 +175,9 @@ struct Pipeline::Impl {
     }
 
     const auto& solution = candidates[*selected];
+    const bool new_observation = snapshot->source.frame_id == completed.frame_id &&
+                                 snapshot->source.generation == completed.generation &&
+                                 core::same_time(snapshot->source.exposure, completed.exposure);
     const auto angles = decision::direction_to_angles(
         config.aim_reference_to_world.conjugate() * solution.ballistic.initial_velocity_world_mps);
 
@@ -225,11 +228,25 @@ struct Pipeline::Impl {
                                   true,
                                   support.settled};
 
+    // 预测保持可以给出新瞄准方向，但不是新观测，不能重新首检获得开火许可。
+    // 指令到期也不能越过原始曝光的控制年龄上限。
+    const auto source_expiry = core::advance(snapshot->source.exposure,
+                                               config.guard.timing.control_age);
+    const auto requested_expiry = core::advance(now, config.intent_lifetime);
+    const auto deadline = source_expiry.nanoseconds() < requested_expiry.nanoseconds()
+                              ? source_expiry : requested_expiry;
+    if (deadline.nanoseconds() <= now.nanoseconds()) {
+      withdraw();
+
+      return;
+    }
+
     control::ControlIntent intent(snapshot->source, request.authority.role, request.authority.task,
                                   request.authority.mode, request.authority.space,
-                                  request.control_requested, request.fire_requested,
+                                  request.control_requested,
+                                  request.fire_requested && new_observation,
                                   {request.angles.yaw, request.angles.pitch, 0, 0, 0, 0}, now,
-                                  core::advance(now, config.intent_lifetime), facts,
+                                  deadline, facts,
                                   snapshot->timing_evidence, request.distance);
 
     ++metrics.decisions;
@@ -312,7 +329,7 @@ struct Pipeline::Impl {
     if (!updated)
       throw std::runtime_error(updated.error().message);
 
-    decide();
+    decide(source);
 
     if (observer)
       observer(packet, batch, observations);

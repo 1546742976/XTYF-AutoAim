@@ -3,6 +3,7 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <set>
+#include <cstdint>
 
 namespace autoaim::vision {
 std::vector<cv::Point3f> CalibrationBoard::object_points() const {
@@ -58,6 +59,7 @@ CalibrationDataset load_calibration_dataset(const std::filesystem::path& manifes
     throw std::invalid_argument("Positive calibration image dimensions required");
 
   std::set<std::string> ids, paths;
+  std::set<std::uint64_t> image_contents;
 
   for (const auto& sample : c.require<std::vector<YAML::Node>>("samples")) {
     const auto id = sample["id"].as<std::string>();
@@ -101,6 +103,16 @@ CalibrationDataset load_calibration_dataset(const std::filesystem::path& manifes
       }
       if (image.size() != image_size)
         throw std::invalid_argument("Mixed calibration image dimensions");
+
+      // 对实际解码的灰度像素去重：改文件名或 PNG 编码不构成独立验证样本。
+      std::uint64_t hash = 14695981039346656037ULL;
+      for (int row = 0; row < image.rows; ++row)
+        for (int col = 0; col < image.cols; ++col) {
+          hash ^= image.ptr<std::uint8_t>(row)[col];
+          hash *= 1099511628211ULL;
+        }
+      if (!image_contents.insert(hash).second)
+        throw std::invalid_argument("Same decoded image reused across calibration samples");
 
       const cv::Size pattern(data.board.columns, data.board.rows);
       const bool found = data.board.kind == BoardKind::chessboard ?

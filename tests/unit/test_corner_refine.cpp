@@ -36,5 +36,23 @@ int main() {
 
     const auto reverse = vision::refine_corners(image, rolled, options);
     CHECK(reverse.refined && reverse.detection.corners[0].y > reverse.detection.corners[3].y);
+    auto strict = options;
+    strict.maximum_shift_px = 0.1;
+    const auto too_far = vision::refine_corners(image, original, strict);
+    CHECK(!too_far.refined && !too_far.detection.corners_reliable);
+    CHECK(too_far.detection.corners == original.corners);
+
+    // 透视下两侧不等长仍可精修，不添加等长灯条前提。
+    auto unequal_bytes = std::make_shared<std::vector<std::uint8_t>>(*bytes);
+    for (int y = 20; y < 30; ++y)
+      for (int x : {69, 70, 71})
+        (*unequal_bytes)[(y * 100 + x) * 3 + 2] = 0;
+    auto unequal = original;
+    unequal.corners[1].y = 31;
+    const auto perspective = vision::refine_corners(
+        core::Image(100, 80, 300, unequal_bytes), unequal, options);
+    CHECK(perspective.refined && perspective.detection.corners_reliable);
+    CHECK_NEAR(perspective.detection.corners[1].y, 30, 0.1);
+    CHECK_NEAR(perspective.detection.corners[0].y, 20, 0.1);
   });
 }

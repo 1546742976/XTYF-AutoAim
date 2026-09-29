@@ -29,6 +29,17 @@ int main() {
     CHECK(core::same_time(result.value().source.exposure, snapshot->source.exposure));
     CHECK(!decision::solve_intercept(*snapshot, request, {0, 0, 1}, ballistic,
                                      {1, core::Seconds(1e-12), core::Metres(1e-12)}));
+    // 移动/旋转目标；时间门限足够宽，唯一改变的是最终位置残差门限。
+    const auto loose = decision::solve_intercept(*snapshot, request, {0, 0, 1}, ballistic,
+        {1, core::Seconds(1), core::Metres(0.1)});
+    CHECK(loose && loose.value().iterations == 1);
+    const auto loose_impact = ballistic.position(request.launch_origin,
+        loose.value().ballistic.initial_velocity_world_mps, loose.value().ballistic.flight_time);
+    const double residual =
+        (loose_impact.metres() - loose.value().plate.pose.value().translation()).norm();
+    CHECK(residual > 1e-8 && residual < 0.1);
+    CHECK(!decision::solve_intercept(*snapshot, request, {0, 0, 1}, ballistic,
+        {1, core::Seconds(1), core::Metres(residual / 2)}));
 
     auto invalid = request;
     invalid.speed = core::MetresPerSecond(0);

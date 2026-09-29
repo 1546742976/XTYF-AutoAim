@@ -41,6 +41,7 @@ FrameEvaluation evaluate_frame(const std::vector<ArmorAnnotation>& truth,
   };
   std::vector<Pair> pairs;
   for (std::size_t t = 0; t < truth.size(); ++t) {
+    validate_annotation_corners(truth[t].corners);
     const auto a = bounds(truth[t].corners);
     if (a.area() <= 0)
       throw std::invalid_argument("Degenerate ground truth box");

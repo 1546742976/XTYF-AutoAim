@@ -29,6 +29,8 @@ const char* armor_size_name(ArmorSize size);
 struct Detection {
   // 模型候选顺序；经 CornerMapping 后为物理 TL,TR,BR,BL。图像排序不证明物理语义。
   std::array<cv::Point2f, 4> corners;
+  // 传统路径为灯条 alignment，YOLOv5 为 sigmoid(objectness)，YOLO11 为最大类分数。
+  // 各路径的启发式分数并非同一种已校准概率，不能直接解释为命中概率。
   float confidence;
   TeamColor color;
   int raw_class_id; // 仅用于对应模型诊断/旧配置兼容，不能参与跨模型关联。

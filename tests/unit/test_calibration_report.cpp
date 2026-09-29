@@ -27,6 +27,9 @@ int main() {
                                                  vision::CalibrationCapability::intrinsics);
     };
     CHECK(evaluate(report).qualifies(core::ClockDomain::replay, "test-camera", "test-v1"));
+    auto legacy = YAML::Clone(report);
+    legacy.remove("intrinsic_quality");
+    CHECK(evaluate(legacy).level() == core::EvidenceLevel::missing);
     CHECK(!evaluate(report).qualifies(core::ClockDomain::host_monotonic, "test-camera", "test-v1"));
     CHECK(!evaluate(report).qualifies(core::ClockDomain::replay, "other", "test-v1"));
     CHECK(!calibration.qualified(core::ClockDomain::replay, "test-camera", "test-v1"));
@@ -35,6 +38,21 @@ int main() {
         core::ClockDomain::host_monotonic, 0.01));
 
     auto bad = YAML::Clone(report);
+    bad["passed"] = true;
+    bad["intrinsic_quality"]["information"] = std::vector<std::vector<double>>(
+        9, std::vector<double>(9, 1));
+    CHECK(evaluate(bad).level() == core::EvidenceLevel::missing);
+    bad = YAML::Clone(report);
+    bad["intrinsic_quality"]["samples"][1]["points_fingerprint"] =
+        bad["intrinsic_quality"]["samples"][0]["points_fingerprint"].as<std::string>();
+    CHECK_THROWS(std::invalid_argument, evaluate(bad));
+    bad = YAML::Clone(report);
+    bad["intrinsic_quality"]["samples"][0]["id"] = "not-the-fitting-sample";
+    CHECK_THROWS(std::invalid_argument, evaluate(bad));
+    bad = YAML::Clone(report);
+    bad["intrinsic_quality"]["minimum_information_ratio"] = 0;
+    CHECK_THROWS(std::invalid_argument, evaluate(bad));
+    bad = YAML::Clone(report);
     bad["domain"] = "host_monotonic";
     CHECK_THROWS(std::invalid_argument, evaluate(bad));
     bad = YAML::Clone(report);

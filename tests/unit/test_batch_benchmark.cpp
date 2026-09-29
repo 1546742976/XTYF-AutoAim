@@ -1,5 +1,9 @@
 #include "autoaim/pipeline/offline_tools.hpp"
 #include "autoaim/hal/session_writer.hpp"
+#include "autoaim/pipeline/run_metadata.hpp"
+#include "autoaim/vision/calibration_report.hpp"
+#include "support/calibration_fixture.hpp"
+#include "../../src/pipeline/session_annotation.hpp"
 #include "test_support.hpp"
 #include <chrono>
 #include <fstream>
@@ -20,6 +24,51 @@ int main(int argc, char** model_paths) {
         std::filesystem::remove_all(path);
       }
     } cleanup{directory};
+
+    // 报告文件单独变化也必须可追溯；记录的是已装载证据，而非看到文件就授予资格。
+    const auto data = test::calibration_dataset();
+    const auto solution = vision::solve_intrinsics(data);
+    auto intrinsic_report = vision::intrinsic_report(data, solution,
+        {"synthetic-camera", "synthetic-v1", "2026-09-30", "synthetic independent holdout"},
+        core::ClockDomain::replay, 0.01);
+    namespace detail = pipeline::annotation_detail;
+    const auto report_path = directory / "intrinsics.yaml";
+    detail::write_yaml(report_path, intrinsic_report);
+    auto calibration = YAML::LoadFile((root / "config/offline/calibration.yaml").string());
+    calibration["calibration"]["camera_matrix"] =
+        std::vector<double>(solution.matrix.val, solution.matrix.val + 9);
+    calibration["calibration"]["distortion"] = solution.distortion;
+    calibration["calibration"]["intrinsic_report_file"] = "intrinsics.yaml";
+    detail::write_yaml(directory / "calibration.yaml", calibration);
+    auto configuration = YAML::LoadFile((root / "config/offline/armor.yaml").string());
+    configuration["calibration_file"] = "calibration.yaml";
+    configuration["geometry_files"][0] = (root / "config/offline/geometry.yaml").string();
+    const auto config_path = directory / "config.yaml";
+    detail::write_yaml(config_path, configuration);
+    const auto loaded = pipeline::load_pipeline_config(config_path);
+    CHECK(loaded);
+    const auto original = pipeline::describe_run(config_path, loaded.value());
+    CHECK(original["run_metadata_schema_version"].as<int>() == 2);
+    CHECK(original["calibration_reports"]["intrinsics"]["evidence_level"].as<std::string>() ==
+          "simulation");
+    CHECK(original["calibration_reports"]["extrinsics"]["file"].IsNull());
+    CHECK(!original["calibration_reports"]["extrinsics"]["qualified"].as<bool>());
+    const auto original_hash = original["calibration_reports"]["intrinsics"]["file"]
+        ["fnv1a64"].as<std::string>();
+    detail::write_bytes(report_path, detail::read_bytes(report_path) + "\n# different bytes\n");
+    const auto changed = pipeline::describe_run(config_path, loaded.value());
+    CHECK(changed["calibration_reports"]["intrinsics"]["file"]["fnv1a64"]
+          .as<std::string>() != original_hash);
+    CHECK(YAML::Dump(changed["calibration_parameters"]) ==
+          YAML::Dump(original["calibration_parameters"]));
+    CHECK(YAML::Dump(changed["calibration_file"]) == YAML::Dump(original["calibration_file"]));
+    intrinsic_report.remove("intrinsic_quality");
+    detail::write_yaml(report_path, intrinsic_report);
+    const auto legacy = pipeline::load_pipeline_config(config_path);
+    CHECK(legacy);
+    CHECK(pipeline::describe_run(config_path, legacy.value())["calibration_reports"]
+          ["intrinsics"]["evidence_level"].as<std::string>() == "missing");
+
     hal::SessionWriter writer(directory / "input", {"fixture", "v1", std::nullopt});
     for (int id = 1; id <= 3; ++id) {
       const core::TimePoint at(id * 10000000, core::ClockDomain::replay);
@@ -87,7 +136,86 @@ int main(int argc, char** model_paths) {
     CHECK(summary["mean_position_error_m"].IsNull());
     CHECK(summary["usable_chain_recall"].as<double>() == 0);
     CHECK(measured["runs"][0]["pool_copy"]["samples"].as<int>() == 3);
+    CHECK(report["report_schema_version"].as<int>() == 1);
+    CHECK(report["command_line"].size() == arguments.size());
+    CHECK(report["working_directory"].as<std::string>() ==
+          std::filesystem::current_path().string());
+    CHECK(report["annotations_file"].IsNull() && report["annotations_reviewed"].IsNull());
+    CHECK(report["annotations_fingerprint"].IsNull());
+    CHECK(report["pose_metrics"].as<std::string>() == "not_produced");
+    CHECK(report["dataset_fingerprint"]["files"].size() == 4);
+    CHECK(report["build"]["source_sha256"].as<std::string>().size() == 64);
+    CHECK(report["build"]["compiler"].as<std::string>().size() > 0);
+    CHECK(report["build"]["opencv_version"].as<std::string>().size() > 0);
     CHECK(pipeline::run_detector_benchmark(int(argv.size()), argv.data()) == 1);
+
+    const auto run = [](std::vector<std::string> values, bool annotation = false) {
+      std::vector<char*> pointers;
+      for (auto& value : values)
+        pointers.push_back(value.data());
+
+      return annotation ? pipeline::run_annotate_session(int(pointers.size()), pointers.data()) :
+                          pipeline::run_detector_benchmark(int(pointers.size()), pointers.data());
+    };
+    for (const std::string value : {"missing", "", "abc", "0", "-1", "1.1", "NaN", "Inf",
+                                    "0.5junk", "1e9999"}) {
+      std::vector<std::string> invalid{"bench_detector", "--dataset",
+          (directory / "input/events.yaml").string(), "--config",
+          (root / "config/offline/armor.yaml").string(), "--output",
+          (directory / "invalid").string()};
+      if (value != "missing") {
+        invalid.push_back("--iou");
+        invalid.push_back(value);
+      }
+      CHECK(run(invalid) == 1);
+      CHECK(!std::filesystem::exists(directory / "invalid"));
+    }
+    for (const std::string flag : {"--pose-position-limit-m", "--pose-rotation-limit-rad"}) {
+      for (const std::string value : {"0.5junk", "", "abc", "NaN", "Inf", "-1", "1e9999"}) {
+        std::vector<std::string> invalid{"bench_detector", "--dataset",
+            (directory / "input/events.yaml").string(), "--config",
+            (root / "config/offline/armor.yaml").string(), "--iou", "0.5", "--output",
+            (directory / "invalid-pose").string(), "--pose-reference", "test-reference",
+            "--pose-position-limit-m", "0", "--pose-rotation-limit-rad", "0", flag, value};
+        CHECK(run(invalid) == 1);
+        CHECK(!std::filesystem::exists(directory / "invalid-pose"));
+      }
+    }
+    CHECK(run({"bench_detector", "--dataset", (directory / "input/events.yaml").string(),
+        "--config", (root / "config/offline/armor.yaml").string(), "--iou", "0.5", "--output",
+        (directory / "zero-pose-limits").string(), "--pose-reference", "test-reference",
+        "--pose-position-limit-m", "0", "--pose-rotation-limit-rad", "0"}) == 0);
+
+    CHECK(run({"annotate", "--export", (directory / "annotation-draft").string(),
+               "--session", (directory / "input").string()}, true) == 0);
+    const auto annotations_file = directory / "annotation-draft/annotations.yaml";
+    auto annotations = detail::read_document(annotations_file);
+    annotations["reviewed"] = true;
+    annotations["frames"].remove(2);
+    detail::write_yaml(annotations_file, annotations);
+    const auto certified = directory / "certified";
+    CHECK(run({"annotate", "--apply", "--session", (directory / "input").string(),
+               "--annotations", annotations_file.string(), "--output", certified.string()},
+               true) == 0);
+    std::vector<std::string> verified{"bench_detector", "--dataset",
+        (certified / "events.yaml").string(), "--config",
+        (root / "config/offline/armor.yaml").string(), "--iou", "1", "--output",
+        (directory / "verified-report").string()};
+    CHECK(run(verified) == 0);
+    const auto verified_report = detail::read_document(directory / "verified-report/report.yaml");
+    CHECK(verified_report["annotations_reviewed"].as<bool>());
+    CHECK(verified_report["annotations_file"].as<std::string>() ==
+          (certified / "annotations.yaml").string());
+    CHECK(verified_report["annotations_fingerprint"]["fnv1a64"].as<std::string>().size() == 16);
+    const auto first = detail::read_bytes(directory / "verified-report/report.yaml");
+    std::filesystem::rename(directory / "verified-report", directory / "saved-report");
+    CHECK(run(verified) == 0);
+    CHECK(first == detail::read_bytes(directory / "verified-report/report.yaml"));
+    const auto pristine_labels = detail::read_bytes(certified / "annotations.yaml");
+    detail::write_bytes(certified / "annotations.yaml", pristine_labels + "# changed\n");
+    verified.back() = (directory / "tampered-report").string();
+    CHECK(run(verified) == 1);
+    CHECK(!std::filesystem::exists(directory / "tampered-report"));
 
     // 同一数据的不同有效期必须重新分层；分别覆盖旧输入和独立按键。
     for (const bool button : {false, true}) {

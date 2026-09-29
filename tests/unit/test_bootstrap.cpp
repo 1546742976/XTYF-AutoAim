@@ -13,6 +13,27 @@ int main() {
     CHECK(config.value().role == core::Role::infantry);
     CHECK(config.value().profiles.size() == 1);
     CHECK(config.value().queue.width == 640);
+    const auto& loaded = config.value();
+    const auto simulated = core::Evidence::from_report(core::MeasurementReport::evaluate(
+        {loaded.infantry.device_id, loaded.infantry.configuration_id,
+         "2026-09-30", "bootstrap gate regression"}, {0, 0}, 0, core::ClockDomain::replay));
+    // 分别保留一个默认 declared 证据；任一缺资格都不能进入自动模式。
+    for (const bool qualified_channel : {false, true})
+      for (const auto mode : {mission::ButtonMode::toggle, mission::ButtonMode::hold}) {
+        auto options = loaded.infantry;
+        options.button_mode = mode;
+        core::TimePoint now(0, core::ClockDomain::replay);
+        mission::InfantryMission policy(options, 1, now);
+        const auto& channel = qualified_channel ? simulated : loaded.control_channel;
+        const auto& input = qualified_channel ? loaded.button_evidence : simulated;
+        for (const bool pressed : {false, true, false, true}) {
+          now = core::advance(now, core::Seconds(0.001));
+          policy.update(mission::OperatorSignal{now, policy.generation(), true, false, 0,
+                            input, pressed}, channel, false, now);
+          CHECK(policy.authority().mode == core::ControlMode::assist);
+          CHECK(!policy.authority().fire && policy.generation() == 1);
+        }
+      }
     vision::Detection detection{{}, 1, vision::TeamColor::red, 3, false};
     CHECK(!pipeline::plate_dimensions(config.value(), detection));
     detection.armor_size = vision::ArmorSize::small;

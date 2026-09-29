@@ -47,5 +47,20 @@ int main() {
     CHECK(selector.select(fourth, 1, "profile",
                           {candidate(fourth, 0, 0.2), candidate(fourth, 1, 0, false)},
                           Eigen::Vector3d::UnitX(), Eigen::Vector3d::Zero()) == 0);
+
+    const auto held_at = core::advance(fourth.exposure, core::Seconds(0.02));
+    const auto previous = candidate(fourth, 0, 0.1);
+    const decision::InterceptSolution held(fourth, held_at, held_at,
+        core::advance(held_at, core::Seconds(0.2)), previous.ballistic, previous.plate, 2);
+    CHECK(selector.select(fourth, 1, "profile", {held}, Eigen::Vector3d::UnitX(),
+                          Eigen::Vector3d::Zero()) == 0);
+    CHECK(!selector.select(fourth, 1, "profile", {held}, Eigen::Vector3d::UnitX(),
+                           Eigen::Vector3d::Zero()));
+    const core::Stamp forged(fourth.frame_id, fourth.generation, held_at);
+    const auto later = core::advance(held_at, core::Seconds(0.02));
+    const decision::InterceptSolution changed(forged, later, later,
+        core::advance(later, core::Seconds(0.2)), previous.ballistic, previous.plate, 2);
+    CHECK(!selector.select(forged, 1, "profile", {changed}, Eigen::Vector3d::UnitX(),
+                           Eigen::Vector3d::Zero()));
   });
 }

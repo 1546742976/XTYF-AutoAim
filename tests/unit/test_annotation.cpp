@@ -12,6 +12,15 @@ int main() {
     auto result = read_annotations(node, {100, 100});
     CHECK(result.size() == 1 && result[0].label.category == TargetCategory::three);
     CHECK(!result[0].visible[2] && !result[0].pose);
+    auto degenerate = YAML::Clone(node);
+    degenerate[0]["corners"] = YAML::Load("[[10,10],[10,10],[10,10],[10,10]]");
+    CHECK_THROWS(std::invalid_argument, read_annotations(degenerate, {100, 100}));
+    degenerate[0]["corners"] = YAML::Load("[[10,10],[20,20],[30,30],[40,40]]");
+    CHECK_THROWS(std::invalid_argument, read_annotations(degenerate, {100, 100}));
+    degenerate[0]["corners"] = YAML::Load("[[10,10],[30,10],[30,20],[30,20]]");
+    CHECK_THROWS(std::invalid_argument, read_annotations(degenerate, {100, 100}));
+    degenerate[0]["corners"] = YAML::Load("[[10,12],[30,5],[35,20],[15,30]]");
+    CHECK(read_annotations(degenerate, {100, 100}).size() == 1);
     CHECK(read_annotations(YAML::Load("[]"), {100, 100}).empty());
     CHECK_THROWS(std::invalid_argument, read_annotations({}, {100, 100}));
     auto duplicate = YAML::Clone(node);

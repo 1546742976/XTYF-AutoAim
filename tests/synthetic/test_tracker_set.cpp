@@ -44,7 +44,15 @@ int main() {
       CHECK(ids == std::set<std::uint64_t>({1, 2}));
     }
 
-    const core::Stamp empty(7, 1, core::TimePoint(1000000000, core::ClockDomain::replay));
+    // 0.4 s 大于 lost(0.3)，但仍小于模型时域(0.5)：也必须按新目标重新获取。
+    const core::Stamp reacquired(7, 1, core::TimePoint(520000000, core::ClockDomain::replay));
+    CHECK(targets.update(reacquired, {test::observation(*profile, reacquired,
+        math::Point3<math::WorldFrame>({3, -1, 1}), core::Radians(0.2), 2)}).value());
+    const auto fresh = targets.snapshots(reacquired.exposure);
+    CHECK(fresh.size() == 1 && fresh.front()->target_id == 3);
+    CHECK(!fresh.front()->physical_plate && !fresh.front()->pose_reliable);
+
+    const core::Stamp empty(8, 1, core::TimePoint(1000000000, core::ClockDomain::replay));
     CHECK(targets.update(empty, {}).value());
     CHECK(targets.snapshots(empty.exposure).empty());
     targets.reset(2);

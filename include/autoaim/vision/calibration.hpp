@@ -40,6 +40,15 @@ public:
   bool qualified(core::ClockDomain domain, const std::string& device,
                  const std::string& configuration) const;
 
+  // 已装载并验证的证据，仅供只读来源记录；存在报告文件不等于能力已通过。
+  const core::Evidence& intrinsic_evidence() const noexcept {
+    return intrinsic_evidence_;
+  }
+
+  const core::Evidence& extrinsic_evidence() const noexcept {
+    return extrinsic_evidence_;
+  }
+
 private:
   int width_;
   int height_;

@@ -46,6 +46,10 @@ int main() {
     write(prefix + "  - {id: fit1, split: fit, path: board.png}\n"
                    "  - {id: validation1, split: validation, path: board.png}\n");
     CHECK_THROWS(std::invalid_argument, vision::load_calibration_dataset(root / "data.yaml"));
+    CHECK(std::filesystem::copy_file(root / "board.png", root / "renamed.png"));
+    write(prefix + "  - {id: fit1, split: fit, path: board.png}\n"
+                   "  - {id: validation1, split: validation, path: renamed.png}\n");
+    CHECK_THROWS(std::invalid_argument, vision::load_calibration_dataset(root / "data.yaml"));
     write(prefix + "  - {id: fit1, split: unknown, path: board.png}\n");
     CHECK_THROWS(std::invalid_argument, vision::load_calibration_dataset(root / "data.yaml"));
     CHECK_THROWS(std::invalid_argument,

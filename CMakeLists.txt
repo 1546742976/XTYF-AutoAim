@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(XTYF_AutoAim VERSION 0.1.0 LANGUAGES CXX)
+project(XTYF_AutoAim VERSION 1.1.0 LANGUAGES CXX)
 
 # 保留已验证的默认版本；允许配置时使用 -DCMAKE_CXX_STANDARD=20。
 set(CMAKE_CXX_STANDARD 17 CACHE STRING "C++ language standard (17 by default, 20 allowed)")
@@ -28,6 +28,7 @@ function(autoaim_module name)
 endfunction()
 
 function(autoaim_dependencies name)
+  set(allowed_core)
   set(allowed_math core)
   set(allowed_hal core)
   set(allowed_vision math)
@@ -51,6 +52,17 @@ target_compile_options(autoaim_options INTERFACE
   $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>)
 option(AUTOAIM_SANITIZERS
   "Enable AddressSanitizer and UndefinedBehaviorSanitizer for offline tests" OFF)
+option(AUTOAIM_THREAD_SANITIZER "Enable ThreadSanitizer for offline concurrency tests" OFF)
+if(AUTOAIM_SANITIZERS AND AUTOAIM_THREAD_SANITIZER)
+  message(FATAL_ERROR "ThreadSanitizer and AddressSanitizer/UBSan must use separate builds")
+endif()
+if(AUTOAIM_THREAD_SANITIZER)
+  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    message(FATAL_ERROR "AUTOAIM_THREAD_SANITIZER requires GCC or Clang")
+  endif()
+  target_compile_options(autoaim_options INTERFACE -fsanitize=thread -fno-omit-frame-pointer)
+  target_link_options(autoaim_options INTERFACE -fsanitize=thread)
+endif()
 if(AUTOAIM_SANITIZERS)
   if(NOT CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     message(FATAL_ERROR "AUTOAIM_SANITIZERS requires GCC or Clang")
@@ -134,10 +146,68 @@ target_sources(autoaim_pipeline PRIVATE src/pipeline/pipeline.cpp)
 target_sources(autoaim_pipeline PRIVATE src/pipeline/entry.cpp)
 target_sources(autoaim_pipeline PRIVATE src/pipeline/offline_tools.cpp)
 target_sources(autoaim_pipeline PRIVATE src/pipeline/batch_benchmark.cpp)
+target_sources(autoaim_pipeline PRIVATE src/pipeline/session_annotation.cpp
+  src/pipeline/annotate_session.cpp)
 target_sources(autoaim_pipeline PRIVATE src/pipeline/run_metadata.cpp)
 target_sources(autoaim_pipeline PRIVATE src/pipeline/calibration_tools.cpp)
 target_sources(autoaim_pipeline PRIVATE src/pipeline/uart_adapter.cpp)
 target_sources(autoaim_pipeline PRIVATE src/pipeline/uart_writer.cpp)
+
+# 报告来源只记录内容和构建参数，不包含配置时间。源码改变会触发重新配置。
+file(GLOB_RECURSE autoaim_provenance_sources CONFIGURE_DEPENDS
+  RELATIVE "${PROJECT_SOURCE_DIR}" "src/*.cpp" "src/*.hpp" "include/*.hpp"
+  "apps/*.cpp" "tools/*.cpp")
+list(APPEND autoaim_provenance_sources CMakeLists.txt)
+list(SORT autoaim_provenance_sources)
+set(autoaim_source_inventory "")
+foreach(source IN LISTS autoaim_provenance_sources)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${PROJECT_SOURCE_DIR}/${source}")
+  file(SHA256 "${PROJECT_SOURCE_DIR}/${source}" digest)
+  string(APPEND autoaim_source_inventory "${source}:${digest}\n")
+endforeach()
+string(SHA256 autoaim_source_digest "${autoaim_source_inventory}")
+set(autoaim_build_json "{}")
+function(autoaim_build_field key value)
+  string(REPLACE "\\" "\\\\" value "${value}")
+  string(REPLACE "\"" "\\\"" value "${value}")
+  string(REPLACE "\n" "\\n" value "${value}")
+  string(REPLACE "\r" "\\r" value "${value}")
+  string(REPLACE "\t" "\\t" value "${value}")
+  string(JSON updated SET "${autoaim_build_json}" "${key}" "\"${value}\"")
+  set(autoaim_build_json "${updated}" PARENT_SCOPE)
+endfunction()
+autoaim_build_field(project_version "${PROJECT_VERSION}")
+autoaim_build_field(source_sha256 "${autoaim_source_digest}")
+autoaim_build_field(source_inventory "${autoaim_source_inventory}")
+autoaim_build_field(compiler "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
+autoaim_build_field(compiler_path "${CMAKE_CXX_COMPILER}")
+autoaim_build_field(cmake_version "${CMAKE_VERSION}")
+autoaim_build_field(cxx_standard "${CMAKE_CXX_STANDARD}")
+autoaim_build_field(build_type "${CMAKE_BUILD_TYPE}")
+string(TOUPPER "${CMAKE_BUILD_TYPE}" autoaim_build_type_upper)
+autoaim_build_field(cxx_flags "${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_${autoaim_build_type_upper}}")
+autoaim_build_field(system "${CMAKE_SYSTEM_NAME} ${CMAKE_SYSTEM_PROCESSOR}")
+autoaim_build_field(openvino "${AUTOAIM_OPENVINO}")
+autoaim_build_field(hikrobot "${AUTOAIM_HIKROBOT}")
+autoaim_build_field(sanitizers "${AUTOAIM_SANITIZERS}")
+autoaim_build_field(thread_sanitizer "${AUTOAIM_THREAD_SANITIZER}")
+autoaim_build_field(opencv_version "${OpenCV_VERSION}")
+autoaim_build_field(eigen_version "${Eigen3_VERSION}")
+if(DEFINED yaml-cpp_VERSION)
+  autoaim_build_field(yaml_cpp_version "${yaml-cpp_VERSION}")
+else()
+  autoaim_build_field(yaml_cpp_version "unknown")
+endif()
+if(AUTOAIM_OPENVINO)
+  autoaim_build_field(openvino_version "${OpenVINO_VERSION}")
+endif()
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/autoaim_build_information.hpp"
+  CONTENT "#pragma once\ninline constexpr const char* autoaim_build_information =
+R\"autoaim_build(${autoaim_build_json})autoaim_build\";\n")
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/autoaim_build_information.json"
+  CONTENT "${autoaim_build_json}\n")
+target_include_directories(autoaim_pipeline PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_sources(autoaim_vision PRIVATE src/vision/annotation.cpp)
 target_sources(autoaim_vision PRIVATE src/vision/evaluation.cpp)
 target_sources(autoaim_vision PRIVATE src/vision/sequence_evaluation.cpp)
@@ -152,7 +222,7 @@ autoaim_dependencies(mission decision)
 autoaim_dependencies(pipeline mission control hal)
 
 foreach(entry autoaim_node offline_replay autoaim_infantry autoaim_sentry calibration_tool
-  bench_detector)
+  bench_detector annotate_session)
   add_executable(${entry} apps/${entry}.cpp)
   target_link_libraries(${entry} PRIVATE autoaim_pipeline)
 endforeach()
@@ -198,12 +268,18 @@ EDGES = {
     "mission": {"decision"},
     "pipeline": {"mission", "control", "hal"},
 }
+TOOL_EDGES = {
+    "tools/synthetic_sim": {"pipeline"},
+    "tools/protocol_tester": {"control"},
+    "tools/replay_visualizer": {"pipeline"},
+    "tools/pipeline_metrics": set(),
+}
 
 
 def allowed(module):
     result = {module}
 
-    for child in EDGES[module]:
+    for child in (EDGES | TOOL_EDGES)[module]:
         result |= allowed(child)
 
     return result
@@ -218,6 +294,9 @@ def owner(path, root):
     if parts[0] == "src":
         return parts[1]
 
+    if parts[0] == "tools":
+        return "/".join(parts[:2])
+
     return "pipeline"  # apps 是编排层的薄入口。
 
 
@@ -230,13 +309,29 @@ def check(root):
         content = re.sub(r"\[(=*)\[.*?\]\1\]", "", cmake.read_text(encoding="utf-8"), flags=re.S)
         content = re.sub(r"#[^\n]*", "", content)
 
+        declarations = re.findall(r"set\(allowed_(\w+)\s*([^)]*)\)", content)
+        whitelist = {name: set(deps.split()) for name, deps in declarations}
+        if whitelist != EDGES or len(declarations) != len(EDGES):
+            failures.append(f"{cmake}: CMake/checker dependency whitelist drift")
+
+        links = {}
+        for declaration in re.findall(r"target_link_libraries\(([^)]+)\)", content):
+            target, *dependencies = declaration.split()
+            if "tools/" + target in TOOL_EDGES:
+                modules = {d.removeprefix("autoaim_") for d in dependencies
+                           if d.startswith("autoaim_") and d != "autoaim_options"}
+                links.setdefault("tools/" + target, set()).update(modules)
+        for tool, modules in TOOL_EDGES.items():
+            if (root / tool).exists() and links.get(tool) != modules:
+                failures.append(f"{cmake}: tool link/checker drift: {tool}")
+
         for declaration in re.findall(r"autoaim_dependencies\(([^)]+)\)", content):
             source, *dependencies = declaration.split()
             for destination in dependencies:
                 if destination not in EDGES.get(source, set()):
                     failures.append(f"{cmake}: forbidden target {source} -> {destination}")
 
-    for directory in ("include/autoaim", "src", "apps"):
+    for directory in ("include/autoaim", "src", "apps", "tools"):
         for path in (root / directory).rglob("*"):
             if path.suffix not in (".hpp", ".cpp", ".h"):
                 continue
@@ -260,7 +355,7 @@ def check(root):
                     continue
 
                 destination = owner(target, root)
-                if source not in EDGES or destination not in allowed(source):
+                if source not in (EDGES | TOOL_EDGES) or destination not in allowed(source):
                     failures.append(f"{path}: forbidden {source} -> {destination}: {name}")
 
     return failures
@@ -287,22 +382,49 @@ def self_test():
 
         core.write_text("", encoding="utf-8")
         cmake = root / "CMakeLists.txt"
-        cmake.write_text("autoaim_dependencies(control hal)", encoding="utf-8")
+        whitelist = "\n".join(f"set(allowed_{name} {' '.join(sorted(deps))})"
+                              for name, deps in EDGES.items()) + "\n"
+        cmake.write_text(whitelist + "autoaim_dependencies(control hal)", encoding="utf-8")
         if check(root):
             raise RuntimeError("checker rejected permitted target edge")
 
-        cmake.write_text("autoaim_dependencies(hal vision)", encoding="utf-8")
+        cmake.write_text(whitelist + "autoaim_dependencies(hal vision)", encoding="utf-8")
         if not check(root):
             raise RuntimeError("checker missed forbidden target edge")
 
         embedded = "file(GENERATE OUTPUT checker.py CONTENT [==[autoaim_dependencies(hal vision)]==])\n"
-        cmake.write_text(embedded + "autoaim_dependencies(control hal)", encoding="utf-8")
+        cmake.write_text(whitelist + embedded + "autoaim_dependencies(control hal)",
+                         encoding="utf-8")
         if check(root):
             raise RuntimeError("checker interpreted embedded script text as a target edge")
 
-        cmake.write_text(embedded + "autoaim_dependencies(hal vision)", encoding="utf-8")
+        cmake.write_text(whitelist + embedded + "autoaim_dependencies(hal vision)",
+                         encoding="utf-8")
         if not check(root):
             raise RuntimeError("checker missed forbidden target edge after embedded script")
+
+        cmake.write_text(whitelist.replace("set(allowed_hal core)", "set(allowed_hal vision)"),
+                         encoding="utf-8")
+        if not check(root):
+            raise RuntimeError("checker missed whitelist drift")
+
+        tool = root / "tools/protocol_tester/main.cpp"
+        tool.parent.mkdir(parents=True)
+        tool.write_text('#include "autoaim/control/b.hpp"', encoding="utf-8")
+        permitted = whitelist + "target_link_libraries(protocol_tester PRIVATE autoaim_control)"
+        cmake.write_text(permitted, encoding="utf-8")
+        if check(root):
+            raise RuntimeError("checker rejected tool linked capability")
+        vision = root / "include/autoaim/vision/c.hpp"
+        vision.parent.mkdir(parents=True)
+        vision.write_text("", encoding="utf-8")
+        tool.write_text('#include "autoaim/vision/c.hpp"', encoding="utf-8")
+        if not check(root):
+            raise RuntimeError("checker granted all modules to tool")
+        tool.write_text('#include "autoaim/control/b.hpp"', encoding="utf-8")
+        cmake.write_text(permitted.replace("autoaim_control", "autoaim_options"), encoding="utf-8")
+        if not check(root):
+            raise RuntimeError("checker missed tool link drift")
 
 
 if __name__ == "__main__":
@@ -324,6 +446,16 @@ if __name__ == "__main__":
     "${autoaim_dependency_checker}" "${CMAKE_CURRENT_SOURCE_DIR}")
   add_test(NAME boundary_checker_self_test COMMAND ${Python3_EXECUTABLE}
     "${autoaim_dependency_checker}" --self-test)
+  add_test(NAME test_verification_manifest COMMAND ${Python3_EXECUTABLE}
+    "${PROJECT_SOURCE_DIR}/tests/verification_manifest.py" --self-test)
+  set_tests_properties(test_verification_manifest PROPERTIES TIMEOUT 30)
+  # 显式构建此目标保存验收材料；它列出测试，不运行测试或改变运行报告指纹。
+  add_custom_target(verification_manifest
+    COMMAND ${Python3_EXECUTABLE} "${PROJECT_SOURCE_DIR}/tests/verification_manifest.py"
+      --source "${PROJECT_SOURCE_DIR}" --build "${CMAKE_CURRENT_BINARY_DIR}"
+      --ctest "${CMAKE_CTEST_COMMAND}" --configuration "$<CONFIG>"
+      --output "${CMAKE_CURRENT_BINARY_DIR}/verification_manifest.json"
+    VERBATIM)
 
   autoaim_test(test_smoke tests/unit/test_smoke.cpp)
   autoaim_test(test_result tests/unit/test_result.cpp autoaim_core)
@@ -371,6 +503,8 @@ if __name__ == "__main__":
   autoaim_test(test_evaluation tests/unit/test_evaluation.cpp autoaim_vision)
   autoaim_test(test_sequence_evaluation tests/unit/test_sequence_evaluation.cpp autoaim_vision)
   autoaim_test(test_batch_benchmark tests/unit/test_batch_benchmark.cpp autoaim_pipeline)
+  autoaim_test(test_annotate_session tests/unit/test_annotate_session.cpp autoaim_pipeline)
+  autoaim_test(test_evaluation_golden tests/synthetic/test_evaluation_golden.cpp autoaim_pipeline)
   autoaim_test(test_detection_labels tests/unit/test_detection_labels.cpp autoaim_vision)
   autoaim_test(test_corner_semantics tests/unit/test_corner_semantics.cpp autoaim_vision)
   autoaim_test(test_corner_refine tests/unit/test_corner_refine.cpp autoaim_vision)
@@ -433,6 +567,7 @@ if __name__ == "__main__":
     ${PROJECT_SOURCE_DIR}/config/offline/armor.yaml --self-test)
   add_test(NAME test_visualizer_help COMMAND replay_visualizer --help)
   add_test(NAME test_metrics_tool COMMAND pipeline_metrics --self-test)
+  add_test(NAME test_annotate_tool COMMAND annotate_session --self-test)
   add_test(NAME test_live_disabled COMMAND autoaim_node --config
     ${PROJECT_SOURCE_DIR}/config/hardware/disabled.yaml)
   set_tests_properties(test_live_disabled PROPERTIES WILL_FAIL TRUE TIMEOUT 5)

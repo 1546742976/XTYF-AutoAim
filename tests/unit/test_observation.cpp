@@ -1,6 +1,7 @@
 #include "autoaim/estimation/observation.hpp"
 #include "support/vision_fixture.hpp"
 #include "test_support.hpp"
+#include <algorithm>
 
 int main() {
   using namespace autoaim;
@@ -35,6 +36,22 @@ int main() {
         frame, detection, estimate, calibration, vision::PoseCovariance::Identity() * 0.001);
 
     CHECK(observation);
+    CHECK(observation.value().candidate_reliable(*estimate.selected));
+    CHECK(!observation.value().candidate_reliable(estimate.candidates.size()));
+    for (std::size_t i = 0; i < estimate.candidates.size(); ++i)
+      if (i != *estimate.selected)
+        CHECK(!observation.value().candidate_reliable(i));
+
+    // 重排候选并同步索引/世界坐标，证明必须跟随候选，不能依赖数组首项。
+    auto reordered = estimate;
+    auto world = observation.value().world_candidates;
+    std::reverse(reordered.candidates.begin(), reordered.candidates.end());
+    std::reverse(world.begin(), world.end());
+    reordered.selected = reordered.candidates.size() - 1 - *estimate.selected;
+    const estimation::Observation permuted(source, detection, reordered, world, pose,
+        raw.time_origin, raw.timing_uncertainty, raw.timing_evidence);
+    CHECK(permuted.candidate_reliable(*reordered.selected));
+
     CHECK(observation.value().world_candidates.size() == estimate.candidates.size());
     const auto& selected = observation.value().world_candidates[*estimate.selected];
     const auto expected = pose.gimbal_to_world.value().apply(truth.translation());

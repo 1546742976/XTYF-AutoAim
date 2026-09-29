@@ -20,11 +20,15 @@ struct Observation {
   const core::TimeOrigin time_origin;
   const core::Seconds timing_uncertainty;
   const core::Evidence timing_evidence;
+  // 兼容字段：只描述 pnp.selected 的证明，不代表所有 world_candidates 都可靠。
   const bool reliable;
 
   Observation(core::Stamp stamp, vision::Detection pixels, vision::PnpEstimate estimate,
               std::vector<ObservedPose> candidates, vision::AlignedPose aligned,
               core::TimeOrigin origin, core::Seconds time_sigma, core::Evidence evidence);
+
+  // 关联不是新的 PnP 消歧证明。改选候选仍可估计，但不能继承原选解的质量许可。
+  bool candidate_reliable(std::size_t index) const noexcept;
 };
 
 // additional_covariance 是外参/历史姿态等在板中心处、世界系下的附加误差协方差。

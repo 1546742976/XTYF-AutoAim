@@ -1,13 +1,22 @@
 #include "autoaim/vision/calibration_solver.hpp"
+#include "calibration_quality.hpp"
 #include <opencv2/calib3d.hpp>
 #include <set>
 #include <Eigen/Eigenvalues>
+#include <Eigen/QR>
+#include <cstring>
+#include <cstdint>
+#include <iomanip>
+#include <limits>
+#include <locale>
+#include <sstream>
 
 namespace autoaim::vision {
 namespace {
 void check_views(const CalibrationDataset& data) {
   const auto count = data.board.object_points().size();
   std::set<std::string> ids;
+  std::set<std::string> contents;
 
   if (data.views.empty())
     throw std::invalid_argument("No usable calibration views");
@@ -23,6 +32,9 @@ void check_views(const CalibrationDataset& data) {
       if (!std::isfinite(p.x) || !std::isfinite(p.y) || p.x < 0 || p.y < 0 ||
           p.x >= size.width || p.y >= size.height)
         throw std::invalid_argument("Invalid calibration image point");
+
+    if (!contents.insert(calibration_detail::point_fingerprint(view.points)).second)
+      throw std::invalid_argument("Repeated calibration points across samples or splits");
   }
 }
 
@@ -52,6 +64,90 @@ double reprojection_rms(const std::vector<cv::Point3f>& objects,
   return std::sqrt(squared / observed.size());
 }
 } // namespace
+
+namespace calibration_detail {
+std::string point_fingerprint(const std::vector<cv::Point2f>& points) {
+  static_assert(sizeof(float) == 4 && std::numeric_limits<float>::is_iec559);
+  std::uint64_t hash = 14695981039346656037ULL;
+
+  for (const auto& point : points)
+    for (float value : {point.x, point.y}) {
+      if (value == 0)
+        value = 0; // +0/-0 表示同一位置。
+      std::uint32_t bits;
+      std::memcpy(&bits, &value, sizeof(bits));
+      for (int byte = 0; byte < 4; ++byte) {
+        hash ^= (bits >> (byte * 8)) & 0xffU;
+        hash *= 1099511628211ULL;
+      }
+    }
+
+  std::ostringstream result;
+  result.imbue(std::locale::classic());
+  result << std::hex << std::setw(16) << std::setfill('0') << hash << ':' << std::dec
+         << points.size() * 8;
+
+  return result.str();
+}
+
+IntrinsicInformation intrinsic_information(const CalibrationDataset& data,
+                                            const IntrinsicSolution& solution) {
+  check_views(data);
+  check_intrinsics(solution);
+  const auto objects = data.board.object_points();
+  IntrinsicInformation information = IntrinsicInformation::Zero();
+  std::vector<std::string> fitted;
+
+  for (const auto& view : data.views) {
+    if (view.validation)
+      continue;
+
+    fitted.push_back(view.id);
+    cv::Mat rotation, translation, jacobian;
+    if (!cv::solvePnP(objects, view.points, solution.matrix, solution.distortion,
+                       rotation, translation, false, cv::SOLVEPNP_ITERATIVE))
+      throw std::invalid_argument("Cannot assess intrinsic view pose: " + view.id);
+
+    std::vector<cv::Point2f> projected;
+    cv::projectPoints(objects, rotation, translation, solution.matrix, solution.distortion,
+                        projected, jacobian);
+    Eigen::MatrixXd pose(jacobian.rows, 6), intrinsic(jacobian.rows, 9);
+    for (int row = 0; row < jacobian.rows; ++row) {
+      for (int col = 0; col < 6; ++col)
+        pose(row, col) = jacobian.at<double>(row, col);
+      for (int col = 0; col < 9; ++col)
+        intrinsic(row, col) = jacobian.at<double>(row, col + 6);
+    }
+
+    // 剔除各图六维位姿可以解释的像素变化；不能把重拟合位姿当内参约束。
+    const Eigen::ColPivHouseholderQR<Eigen::MatrixXd> decomposition(pose);
+    const Eigen::MatrixXd reduced = intrinsic - pose * decomposition.solve(intrinsic);
+    information.noalias() += reduced.transpose() * reduced;
+  }
+
+  if (fitted != solution.fitted_ids || fitted.size() < 3)
+    throw std::invalid_argument("Intrinsic fitting samples do not match solution");
+  if (!information.allFinite() || (information.diagonal().array() <= 0).any())
+    return IntrinsicInformation::Zero();
+
+  const Eigen::Matrix<double, 9, 1> scale = information.diagonal().cwiseSqrt().cwiseInverse();
+  information = (scale.asDiagonal() * information * scale.asDiagonal()).eval();
+
+  return ((information + information.transpose()) / 2).eval();
+}
+
+bool information_usable(const IntrinsicInformation& information) {
+  if (!information.allFinite() || !information.isApprox(information.transpose(), 1e-10) ||
+      !information.diagonal().isApprox(Eigen::Matrix<double, 9, 1>::Ones(), 1e-8))
+    return false;
+
+  Eigen::SelfAdjointEigenSolver<IntrinsicInformation> solver(information, Eigen::EigenvaluesOnly);
+
+  return solver.info() == Eigen::Success && solver.eigenvalues().maxCoeff() > 0 &&
+         solver.eigenvalues().minCoeff() >
+             minimum_information_ratio * solver.eigenvalues().maxCoeff();
+}
+} // namespace calibration_detail
 
 IntrinsicSolution solve_intrinsics(const CalibrationDataset& data) {
   check_views(data);
@@ -90,6 +186,10 @@ IntrinsicSolution solve_intrinsics(const CalibrationDataset& data) {
     solution.per_view_rms_px.push_back(reprojection_rms(objects, image_sets[i], rotations[i],
                                                        translations[i], solution.matrix,
                                                        solution.distortion));
+
+  if (!calibration_detail::information_usable(
+          calibration_detail::intrinsic_information(data, solution)))
+    throw std::invalid_argument("Intrinsic views have insufficient parameter observability");
 
   return solution;
 }

@@ -2,6 +2,23 @@
 #include <set>
 
 namespace autoaim::vision {
+void validate_annotation_corners(const std::array<cv::Point2f, 4>& corners) {
+  double twice_area = 0;
+  for (std::size_t i = 0; i < corners.size(); ++i) {
+    const auto& point = corners[i];
+    if (!std::isfinite(point.x) || !std::isfinite(point.y))
+      throw std::invalid_argument("Nonfinite annotation corner");
+    for (std::size_t j = 0; j < i; ++j)
+      if (point == corners[j])
+        throw std::invalid_argument("Repeated annotation corner");
+    const auto& next = corners[(i + 1) % corners.size()];
+    twice_area += double(point.x) * next.y - double(point.y) * next.x;
+  }
+
+  if (!std::isfinite(twice_area) || twice_area == 0)
+    throw std::invalid_argument("Degenerate annotation polygon");
+}
+
 std::vector<ArmorAnnotation> read_annotations(const YAML::Node& node, cv::Size image_size) {
   if (!node.IsSequence() || image_size.width <= 0 || image_size.height <= 0)
     throw std::invalid_argument("Annotations require an explicit sequence and image dimensions");
@@ -32,6 +49,8 @@ std::vector<ArmorAnnotation> read_annotations(const YAML::Node& node, cv::Size i
       annotation.corners[i] = {points[i][0], points[i][1]};
       annotation.visible[i] = visible[i];
     }
+
+    validate_annotation_corners(annotation.corners);
 
     if (item["track_id"]) {
       annotation.track_id = item["track_id"].as<std::string>();

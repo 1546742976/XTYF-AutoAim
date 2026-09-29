@@ -31,12 +31,29 @@ std::vector<PoseCandidate> ippe_candidates(const Detection& detection,
 
   const auto points = object_corners(dimensions);
   const std::vector<cv::Point3d> objects(points.begin(), points.end());
+  const auto edge = pixels[1] - pixels[0];
+
+  if (!std::isfinite(edge.x) || !std::isfinite(edge.y) || cv::norm(edge) == 0)
+    return {};
+
+  const double theta = std::atan2(edge.y, edge.x);
+  const double c = std::cos(theta), s = std::sin(theta);
+  const cv::Matx33d solver_from_plate(c, s, 0, s, -c, 0, 0, 0, -1);
+  std::vector<cv::Point3d> solver_objects;
+
+  // S 是正交且 det=+1 的等价板系，避开 OpenCV 4.5.4 IPPE rot2vec 的半周奇点。
+  // 不改角点对应；仍只调用一次 IPPE，返回后恢复 R = R' S，保留双候选。
+  for (const auto& point : objects) {
+    const auto transformed = solver_from_plate * cv::Vec3d(point.x, point.y, point.z);
+    solver_objects.emplace_back(transformed[0], transformed[1], transformed[2]);
+  }
+
   std::vector<cv::Mat> rotations, translations;
 
   // IPPE（非 IPPE_SQUARE）支持非正方形共面点；Generic 接口保留多解。
   // https://docs.opencv.org/4.x/d5/d1f/calib3d_solvePnP.html
-  cv::solvePnPGeneric(objects, pixels, calibration.intrinsic(), calibration.distortion(), rotations,
-                      translations, false, cv::SOLVEPNP_IPPE);
+  cv::solvePnPGeneric(solver_objects, pixels, calibration.intrinsic(), calibration.distortion(),
+                      rotations, translations, false, cv::SOLVEPNP_IPPE);
 
   std::vector<PoseCandidate> candidates;
 
@@ -46,6 +63,7 @@ std::vector<PoseCandidate> ippe_candidates(const Detection& detection,
 
     cv::Mat rotation;
     cv::Rodrigues(rotations[i], rotation);
+    rotation = rotation * cv::Mat(solver_from_plate);
     Eigen::Matrix3d matrix;
     Eigen::Vector3d translation;
 
@@ -66,7 +84,9 @@ std::vector<PoseCandidate> ippe_candidates(const Detection& detection,
       continue;
 
     std::vector<cv::Point2d> projected;
-    cv::projectPoints(objects, rotations[i], translations[i], calibration.intrinsic(),
+    cv::Mat restored_rotation;
+    cv::Rodrigues(rotation, restored_rotation);
+    cv::projectPoints(objects, restored_rotation, translations[i], calibration.intrinsic(),
                       calibration.distortion(), projected);
 
     double sum = 0, maximum = 0;

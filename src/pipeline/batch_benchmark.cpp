@@ -3,6 +3,8 @@
 #include "autoaim/pipeline/uart_writer.hpp"
 #include "autoaim/hal/recording_transport.hpp"
 #include "autoaim/pipeline/run_metadata.hpp"
+#include "session_annotation.hpp"
+#include "autoaim_build_information.hpp"
 #include <algorithm>
 #include <chrono>
 #include <fstream>
@@ -172,6 +174,7 @@ int run_batch_benchmark(int argc, char** argv) {
     std::filesystem::path dataset, output;
     std::vector<std::filesystem::path> configurations;
     vision::EvaluationOptions options{0};
+    bool have_iou = false;
     std::optional<std::string> reference;
     std::optional<double> position_limit, rotation_limit;
 
@@ -186,18 +189,29 @@ int run_batch_benchmark(int argc, char** argv) {
         dataset = value;
       else if (key == "--output")
         output = value;
-      else if (key == "--iou")
-        options.minimum_iou = std::stod(value);
+      else if (key == "--iou") {
+        std::size_t consumed = 0;
+        options.minimum_iou = std::stod(value, &consumed);
+        if (consumed != value.size() || !std::isfinite(options.minimum_iou) ||
+            options.minimum_iou <= 0 || options.minimum_iou > 1)
+          throw std::invalid_argument("--iou must be a complete finite number in (0,1]");
+        have_iou = true;
+      }
       else if (key == "--pose-reference")
         reference = value;
-      else if (key == "--pose-position-limit-m")
-        position_limit = std::stod(value);
-      else if (key == "--pose-rotation-limit-rad")
-        rotation_limit = std::stod(value);
+      else if (key == "--pose-position-limit-m" || key == "--pose-rotation-limit-rad") {
+        std::size_t consumed = 0;
+        const double parsed = std::stod(value, &consumed);
+        if (consumed != value.size() || !std::isfinite(parsed) || parsed < 0)
+          throw std::invalid_argument(key + " must be a complete finite nonnegative number");
+        (key == "--pose-position-limit-m" ? position_limit : rotation_limit) = parsed;
+      }
       else
         throw std::invalid_argument("Unknown batch argument: " + key);
     }
 
+    if (!have_iou)
+      throw std::invalid_argument("Missing required --iou in (0,1]");
     if (configurations.empty() || dataset.empty() || output.empty() ||
         std::filesystem::exists(output))
       throw std::invalid_argument("Configurations/dataset/new output directory required");
@@ -208,6 +222,16 @@ int run_batch_benchmark(int argc, char** argv) {
     }
     vision::SequenceEvaluation check(options);
     YAML::Node report, costs;
+    report["report_schema_version"] = 1;
+    report["command_line"] = std::vector<std::string>(argv, argv + argc);
+    report["working_directory"] = std::filesystem::current_path().string();
+    report["build"] = YAML::Load(autoaim_build_information);
+    const auto provenance = annotation_detail::annotation_provenance(dataset);
+    for (const auto& entry : provenance)
+      report[entry.first.as<std::string>()] = YAML::Clone(entry.second);
+    const auto dataset_content = annotation_detail::dataset_fingerprint(dataset);
+    report["dataset_fingerprint"] = dataset_content;
+    report["pose_metrics"] = reference ? "conditional_on_accepted_reference" : "not_produced";
     report["dataset"] = std::filesystem::absolute(dataset).string();
     report["minimum_iou"] = options.minimum_iou;
     report["matching"] = "axis-aligned enclosure IoU; descending IoU then truth/prediction index";
@@ -299,6 +323,9 @@ int run_batch_benchmark(int argc, char** argv) {
       costs["runs"].push_back(measured);
     }
 
+    if (!annotation_detail::same_yaml(dataset_content,
+                                      annotation_detail::dataset_fingerprint(dataset)))
+      throw std::runtime_error("Dataset changed during benchmark");
     if (!std::filesystem::create_directory(output))
       throw std::invalid_argument("Evaluation output directory already exists");
     write_yaml(output / "report.yaml", report);

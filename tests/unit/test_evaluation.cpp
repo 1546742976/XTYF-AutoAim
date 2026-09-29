@@ -35,5 +35,7 @@ int main() {
     CHECK(evaluate_frame(truth, {}, {0.5}).matched == 0);
     CHECK(evaluate_frame({}, predictions, {0.5}).predictions == 1);
     CHECK_THROWS(std::invalid_argument, evaluate_frame(truth, predictions, {0}));
+    truth[0].corners[3] = truth[0].corners[2];
+    CHECK_THROWS(std::invalid_argument, evaluate_frame(truth, predictions, {0.5}));
   });
 }

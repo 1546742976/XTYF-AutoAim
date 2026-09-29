@@ -38,5 +38,21 @@ int main() {
           deactivate.value().covariance.row(alpha).norm() == 0);
 
     CHECK_NEAR(deactivate.value().covariance(phase, phase), 1, 0);
+    auto factor = estimation::StateCovariance::Identity().eval();
+    factor(phase, alpha) = 0.3;
+    factor(alpha, 0) = -0.2;
+    const auto correlated = (factor * factor.transpose()).eval();
+    CHECK(correlated.row(alpha).head(alpha).norm() > 0);
+    const auto to_cv = cv.remap_from(ca, state, correlated, 0.3);
+    CHECK(to_cv && math::covariance_valid(to_cv.value().covariance));
+    CHECK(to_cv.value().covariance.row(alpha).norm() == 0);
+    CHECK(to_cv.value().covariance.col(alpha).norm() == 0);
+    CHECK(to_cv.value().covariance.topLeftCorner(alpha, alpha).isApprox(
+        correlated.topLeftCorner(alpha, alpha)));
+    const auto to_ca = ca.remap_from(cv, to_cv.value().state, to_cv.value().covariance, 0.3);
+    CHECK(to_ca && math::covariance_valid(to_ca.value().covariance));
+    CHECK_NEAR(to_ca.value().covariance(alpha, alpha), 0.3, 0);
+    CHECK(to_ca.value().covariance.row(alpha).head(alpha).norm() == 0);
+    CHECK(to_ca.value().covariance.col(alpha).head(alpha).norm() == 0);
   });
 }

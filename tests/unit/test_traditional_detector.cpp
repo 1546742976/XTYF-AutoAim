@@ -26,6 +26,10 @@ int main() {
     CHECK(result.source.frame_id == 7 && result.source.generation == 2);
     CHECK(!result.detections[0].corners_reliable && result.detections[0].raw_class_id == -1);
     CHECK(result.detections[0].corners[0].x < result.detections[0].corners[1].x);
+    const std::array<cv::Point2f, 4> centerline_endpoints{
+        cv::Point2f(21.5f, 25), {71.5f, 25}, {71.5f, 54}, {21.5f, 54}};
+    for (std::size_t k = 0; k < centerline_endpoints.size(); ++k)
+      CHECK(cv::norm(result.detections[0].corners[k] - centerline_endpoints[k]) < 0.001);
     CHECK(blue.detect(frame).detections.empty());
     CHECK((*pixels)[(25 * 100 + 20) * 3 + 2] == 255);
   });

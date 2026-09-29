@@ -1,4 +1,5 @@
 #include "autoaim/vision/calibration_report.hpp"
+#include "calibration_quality.hpp"
 #include <set>
 
 namespace autoaim::vision {
@@ -51,6 +52,25 @@ YAML::Node intrinsic_report(const CalibrationDataset& data, const IntrinsicSolut
   report["fit_per_view_rms_px"] = solution.per_view_rms_px;
   report["validation"]["rms_px"] = validate_intrinsics(data, solution);
   report["limits"]["rms_px"] = maximum_rms_px;
+
+  const auto information = calibration_detail::intrinsic_information(data, solution);
+  auto quality = report["intrinsic_quality"];
+  quality["method"] = "profiled-pinhole5-column-normalized-v1";
+  quality["minimum_information_ratio"] = calibration_detail::minimum_information_ratio;
+  quality["information"] = std::vector<std::vector<double>>{};
+  for (int row = 0; row < 9; ++row) {
+    std::vector<double> values;
+    for (int col = 0; col < 9; ++col)
+      values.push_back(information(row, col));
+    quality["information"].push_back(values);
+  }
+  for (const auto& view : data.views) {
+    YAML::Node sample;
+    sample["id"] = view.id;
+    sample["split"] = view.validation ? "validation" : "fit";
+    sample["points_fingerprint"] = calibration_detail::point_fingerprint(view.points);
+    quality["samples"].push_back(sample);
+  }
 
   return report;
 }
@@ -165,6 +185,44 @@ core::Evidence calibration_report_evidence(const core::Config& report, const Cal
 
   if (fit.size() < 3 || validation.size() < 2)
     return core::Evidence::missing();
+
+  if (intrinsic) {
+    // 旧报告仍可绑定/读取参数，但没有新质量依据时不能授予内参能力。
+    if (!report.contains("intrinsic_quality"))
+      return core::Evidence::missing();
+    if (report.require<std::string>("intrinsic_quality.method") !=
+            "profiled-pinhole5-column-normalized-v1" ||
+        report.require<double>("intrinsic_quality.minimum_information_ratio") !=
+            calibration_detail::minimum_information_ratio)
+      throw std::invalid_argument("Unknown intrinsic quality method/threshold");
+
+    const auto rows = report.require<std::vector<std::vector<double>>>(
+        "intrinsic_quality.information");
+    if (rows.size() != 9)
+      throw std::invalid_argument("Intrinsic information must have nine rows");
+    calibration_detail::IntrinsicInformation information;
+    for (int row = 0; row < 9; ++row) {
+      if (rows[row].size() != 9)
+        throw std::invalid_argument("Intrinsic information must have nine columns");
+      for (int col = 0; col < 9; ++col)
+        information(row, col) = rows[row][col];
+    }
+    std::vector<std::string> quality_fit, quality_validation;
+    std::set<std::string> contents;
+    for (const auto& sample : report.require<std::vector<YAML::Node>>(
+             "intrinsic_quality.samples")) {
+      const auto split = sample["split"].as<std::string>();
+      const auto content = sample["points_fingerprint"].as<std::string>();
+      if ((split != "fit" && split != "validation") || content.empty() ||
+          !contents.insert(content).second)
+        throw std::invalid_argument("Invalid/overlapping intrinsic sample content");
+      (split == "fit" ? quality_fit : quality_validation).push_back(sample["id"].as<std::string>());
+    }
+    if (quality_fit != fit || quality_validation != validation)
+      throw std::invalid_argument("Intrinsic quality sample binding mismatch");
+    if (!calibration_detail::information_usable(information))
+      return core::Evidence::missing();
+  }
 
   return core::Evidence::from_report(core::MeasurementReport::evaluate(
       std::move(provenance), normalized, 1, domain));

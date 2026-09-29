@@ -36,6 +36,35 @@ YAML::Node quaternion(const Eigen::Quaterniond& q) {
   return YAML::Node(std::vector<double>{q.w(), q.x(), q.y(), q.z()});
 }
 
+YAML::Node describe_calibration_report(const core::Config& config,
+    const std::filesystem::path& base, const char* key, const core::Evidence& evidence,
+    const PipelineConfig& loaded) {
+  YAML::Node node;
+  node["file"] = config.contains(key) ? describe_file(base / config.require<std::string>(key)) :
+                                      YAML::Node(YAML::NodeType::Null);
+  const char* level = "missing";
+  switch (evidence.level()) {
+  case core::EvidenceLevel::missing: break;
+  case core::EvidenceLevel::declared: level = "declared"; break;
+  case core::EvidenceLevel::measured: level = "measured"; break;
+  case core::EvidenceLevel::simulation: level = "simulation"; break;
+  }
+  node["evidence_level"] = level;
+  node["qualification_domain"] = "replay";
+  node["qualified"] = evidence.qualifies(core::ClockDomain::replay,
+      loaded.guard.device_id, loaded.guard.configuration_id);
+  node["provenance"] = YAML::Node(YAML::NodeType::Null);
+  if (const auto* report = evidence.report()) {
+    const auto& provenance = report->provenance();
+    node["provenance"]["device_id"] = provenance.device_id;
+    node["provenance"]["configuration_id"] = provenance.configuration_id;
+    node["provenance"]["date"] = provenance.date;
+    node["provenance"]["method"] = provenance.method;
+  }
+
+  return node;
+}
+
 YAML::Node timing(const WallTimeSummary& value) {
   YAML::Node node;
   node["samples"] = value.samples;
@@ -51,18 +80,29 @@ YAML::Node timing(const WallTimeSummary& value) {
 
 YAML::Node describe_run(const std::filesystem::path& configuration, const PipelineConfig& loaded) {
   YAML::Node node;
+  node["run_metadata_schema_version"] = 2;
   node["configuration_file"] = describe_file(configuration);
   const auto config = YAML::LoadFile(configuration.string());
   node["configuration"] = config;
   node["device_id"] = loaded.guard.device_id;
   node["configuration_id"] = loaded.guard.configuration_id;
   node["input_manifest"] = std::filesystem::absolute(loaded.input_manifest).string();
-  node["calibration_file"] = describe_file(
-      configuration.parent_path() / config["calibration_file"].as<std::string>());
+  const auto calibration_file =
+      configuration.parent_path() / config["calibration_file"].as<std::string>();
+  node["calibration_file"] = describe_file(calibration_file);
+  const auto calibration_config = core::Config::load(calibration_file);
+  if (!calibration_config)
+    throw std::invalid_argument(calibration_config.error().message);
   for (const auto& file : config["geometry_files"])
     node["geometry_files"].push_back(describe_file(
         configuration.parent_path() / file.as<std::string>()));
   const auto& calibration = loaded.calibration;
+  node["calibration_reports"]["intrinsics"] = describe_calibration_report(
+      calibration_config.value(), calibration_file.parent_path(),
+      "calibration.intrinsic_report_file", calibration.intrinsic_evidence(), loaded);
+  node["calibration_reports"]["extrinsics"] = describe_calibration_report(
+      calibration_config.value(), calibration_file.parent_path(),
+      "calibration.extrinsic_report_file", calibration.extrinsic_evidence(), loaded);
   node["calibration_parameters"]["width"] = calibration.width();
   node["calibration_parameters"]["height"] = calibration.height();
   node["calibration_parameters"]["roi_offset"] =

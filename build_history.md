@@ -10,6 +10,7 @@
 
 ## 阅读导航
 
+- [根 CMake 整理（2026-09-30）](#cmake-cleanup-20260930)
 - [瘦身第 1、2 批（2026-09-30）](#slimming-20260930-v2)
 - [并行复核与专项验证（2026-09-30）](#并行复核与专项验证2026-09-30)
 - [测量闭环验收（2026-09-30）](#测量闭环验收2026-09-30)
@@ -18,6 +19,38 @@
 - [返回 README 测试说明](README.md#8-测试已验证范围与待完成项)
 
 ## 阶段记录
+
+<a id="cmake-cleanup-20260930"></a>
+
+### 根 CMake 整理（2026-09-30）
+
+基线提交 `4d90163539f08571afc515c0d9f3e97cf7b09a05`，开始时工作区干净。
+将 48 处零散 `target_sources` 并入九个模块的显式清单，73 个实现文件的集合与
+各目标内顺序不变；普通测试和两个条件异步测试复用 `autoaim_test_target` 创建程序。
+普通测试仍直接链接 `autoaim_options`，异步测试保留原直接链接模块，注册条件、
+名称、命令及超时不变。全部构建逻辑仍在根 CMake，内嵌检查器未修改。
+GPT-6 Astra / Ultra 子智能体完成修改前审阅和修改后只读复核。
+
+复用 `out/slimming-20260930-v2/build-{off,on}` 前，先逐项确认已有生成清单与当前源码
+一致，再保存本轮缓存、File API、编译命令和 CTest 基线；本轮重新配置、构建并运行测试。
+WSL Ubuntu 22.04 / GCC 11.4 / CMake 3.22.1 / C++17 Debug，海康和 sanitizer 均 OFF。
+
+| 配置 | 本轮结果 | 编译单元 | 构建等价比较 |
+| --- | --- | --- | --- |
+| OpenVINO OFF | [103/103 通过](out/cmake-cleanup-20260930/after/off/ctest.log) | 172 | [目标属性、编译命令、测试命令与属性一致](out/cmake-cleanup-20260930/after/off/comparison.json) |
+| OpenVINO ON，已有两份历史模型 | [110/110 通过](out/cmake-cleanup-20260930/after/on/ctest.log) | 174 | [目标属性、编译命令、测试命令与属性一致](out/cmake-cleanup-20260930/after/on/comparison.json) |
+| BUILD_TESTING OFF、OpenVINO OFF | 仅配置比较，未构建或运行测试；20 个目标、0 项测试，未生成检查器 | 84 | [目标属性与编译命令一致](out/cmake-cleanup-20260930/after/no-tests/comparison.json) |
+
+目标比较只去除 CMake File API 的诊断回溯字段，保留实际源码顺序、依赖、编译与链接属性。
+初次比较遗漏了 `languageStandard.backtraces`，因函数层级改变而失败；核对本机 CMake
+手册确认其为回溯索引后，将其纳入位置字段处理，两套比较通过，原始 File API 副本保留。
+生产来源清单仅 `CMakeLists.txt` 的摘要变化；重建程序通过固定样例输出的
+[实际来源标识](out/cmake-cleanup-20260930/report-source-check.json)与新生成清单一致。
+增量构建日志含 Windows 挂载上约 0.02 秒的文件时间偏差警告，构建退出码和全量测试均为 0。
+
+README 和手册同步集中清单及测试 helper 的维护方式。本轮未改运行代码、默认选项、
+依赖权限、模型或测试预期，不作构建耗时收益结论。命令及退出码、缓存、前后图与
+验收清单保存在 `out/cmake-cleanup-20260930/`，未暂存、提交或重置 Git。
 
 <a id="slimming-20260930-v2"></a>
 

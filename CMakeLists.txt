@@ -72,19 +72,28 @@ if(AUTOAIM_SANITIZERS)
   target_link_options(autoaim_options INTERFACE -fsanitize=address,undefined)
 endif()
 
-autoaim_module(core src/core/result.cpp src/core/time.cpp src/core/logging.cpp src/core/config.cpp
+autoaim_module(core
+  src/core/result.cpp
+  src/core/time.cpp
+  src/core/logging.cpp
+  src/core/config.cpp
   src/core/buffer_pool.cpp)
 target_link_libraries(autoaim_core PUBLIC Threads::Threads yaml-cpp)
-autoaim_module(math src/math/angle.cpp src/math/numeric.cpp src/math/se3.cpp src/math/transform.cpp)
+autoaim_module(math
+  src/math/angle.cpp
+  src/math/numeric.cpp
+  src/math/se3.cpp
+  src/math/transform.cpp)
 target_link_libraries(autoaim_math PUBLIC Eigen3::Eigen)
-autoaim_module(hal src/hal/clock_impl.cpp)
-target_sources(autoaim_hal PRIVATE src/hal/file_replay.cpp)
-target_sources(autoaim_hal PRIVATE src/hal/session_writer.cpp)
-target_sources(autoaim_hal PRIVATE src/hal/recording_transport.cpp)
-target_sources(autoaim_hal PRIVATE src/hal/serial_transport.cpp)
-target_sources(autoaim_hal PRIVATE src/hal/can_transport.cpp)
-target_sources(autoaim_hal PRIVATE src/hal/camera_impl.cpp)
-target_sources(autoaim_hal PRIVATE src/hal/camera_parameters.cpp)
+autoaim_module(hal
+  src/hal/clock_impl.cpp
+  src/hal/file_replay.cpp
+  src/hal/session_writer.cpp
+  src/hal/recording_transport.cpp
+  src/hal/serial_transport.cpp
+  src/hal/can_transport.cpp
+  src/hal/camera_impl.cpp
+  src/hal/camera_parameters.cpp)
 option(AUTOAIM_HIKROBOT "Compile optional Hikrobot backend; never enables hardware in replay" OFF)
 set(AUTOAIM_HIKROBOT_INCLUDE "" CACHE PATH "Explicit SDK include directory")
 set(AUTOAIM_HIKROBOT_LIBRARY "" CACHE FILEPATH "Explicit SDK library file")
@@ -99,59 +108,74 @@ if(AUTOAIM_HIKROBOT)
 endif()
 target_include_directories(autoaim_hal SYSTEM PRIVATE ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(autoaim_hal PRIVATE opencv_core opencv_imgcodecs)
-autoaim_module(vision src/vision/calibration.cpp src/vision/detector_traditional.cpp)
-target_sources(autoaim_vision PRIVATE src/vision/calibration_dataset.cpp)
-target_sources(autoaim_vision PRIVATE src/vision/calibration_solver.cpp)
-target_sources(autoaim_vision PRIVATE src/vision/calibration_report.cpp)
-target_sources(autoaim_vision PRIVATE src/vision/detection_labels.cpp)
-target_sources(autoaim_vision PRIVATE src/vision/detector_openvino.cpp
-  src/vision/detector_factory.cpp)
-target_sources(autoaim_vision PRIVATE src/vision/corner_refine.cpp)
-target_sources(autoaim_vision PRIVATE src/vision/pnp.cpp)
+autoaim_module(vision
+  src/vision/calibration.cpp
+  src/vision/detector_traditional.cpp
+  src/vision/calibration_dataset.cpp
+  src/vision/calibration_solver.cpp
+  src/vision/calibration_report.cpp
+  src/vision/detection_labels.cpp
+  src/vision/detector_openvino.cpp
+  src/vision/detector_factory.cpp
+  src/vision/corner_refine.cpp
+  src/vision/pnp.cpp
+  src/vision/annotation.cpp
+  src/vision/evaluation.cpp
+  src/vision/sequence_evaluation.cpp)
 if(AUTOAIM_OPENVINO)
   target_compile_definitions(autoaim_vision PRIVATE AUTOAIM_HAS_OPENVINO=1)
   target_link_libraries(autoaim_vision PRIVATE openvino::runtime)
 endif()
 target_include_directories(autoaim_vision SYSTEM PUBLIC ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(autoaim_vision PUBLIC ${OpenCV_LIBS})
-autoaim_module(estimation src/estimation/observation.cpp)
-target_sources(autoaim_estimation PRIVATE src/estimation/geometry_model.cpp)
-target_sources(autoaim_estimation PRIVATE src/estimation/motion_model.cpp)
-target_sources(autoaim_estimation PRIVATE src/estimation/measurement_model.cpp)
-target_sources(autoaim_estimation PRIVATE src/estimation/ekf.cpp)
-target_sources(autoaim_estimation PRIVATE src/estimation/health.cpp)
-target_sources(autoaim_estimation PRIVATE src/estimation/association.cpp)
-target_sources(autoaim_estimation PRIVATE src/estimation/armor_id.cpp)
-target_sources(autoaim_estimation PRIVATE src/estimation/geometry_selector.cpp)
-target_sources(autoaim_estimation PRIVATE src/estimation/state_machine.cpp)
-target_sources(autoaim_estimation PRIVATE src/estimation/tracker.cpp)
-autoaim_module(decision src/decision/predictor.cpp)
-target_sources(autoaim_decision PRIVATE src/decision/ballistic.cpp)
-target_sources(autoaim_decision PRIVATE src/decision/armor_selector.cpp)
-target_sources(autoaim_decision PRIVATE src/decision/hit_probability.cpp)
-target_sources(autoaim_decision PRIVATE src/decision/aim_adequacy.cpp)
-autoaim_module(control src/control/crc.cpp src/control/command.cpp src/control/protocol.cpp
-  src/control/watchdog.cpp)
-target_sources(autoaim_control PRIVATE src/control/smoother.cpp)
-target_sources(autoaim_control PRIVATE src/control/command_guard.cpp)
-target_sources(autoaim_control PRIVATE src/control/publisher.cpp)
-autoaim_module(mission src/mission/mission_factory.cpp)
-target_sources(autoaim_mission PRIVATE src/mission/target_selector.cpp)
-target_sources(autoaim_mission PRIVATE src/mission/infantry/infantry_mission.cpp)
-target_sources(autoaim_mission PRIVATE src/mission/sentry/sentry_mission.cpp)
-autoaim_module(pipeline src/pipeline/frame_sync.cpp src/pipeline/queue.cpp src/pipeline/command_slot.cpp
-  src/pipeline/scheduler.cpp)
-target_sources(autoaim_pipeline PRIVATE src/pipeline/bootstrap.cpp)
-target_sources(autoaim_pipeline PRIVATE src/pipeline/pipeline.cpp)
-target_sources(autoaim_pipeline PRIVATE src/pipeline/entry.cpp)
-target_sources(autoaim_pipeline PRIVATE src/pipeline/offline_tools.cpp)
-target_sources(autoaim_pipeline PRIVATE src/pipeline/batch_benchmark.cpp)
-target_sources(autoaim_pipeline PRIVATE src/pipeline/session_annotation.cpp
-  src/pipeline/annotate_session.cpp)
-target_sources(autoaim_pipeline PRIVATE src/pipeline/run_metadata.cpp)
-target_sources(autoaim_pipeline PRIVATE src/pipeline/calibration_tools.cpp)
-target_sources(autoaim_pipeline PRIVATE src/pipeline/uart_adapter.cpp)
-target_sources(autoaim_pipeline PRIVATE src/pipeline/uart_writer.cpp)
+autoaim_module(estimation
+  src/estimation/observation.cpp
+  src/estimation/geometry_model.cpp
+  src/estimation/motion_model.cpp
+  src/estimation/measurement_model.cpp
+  src/estimation/ekf.cpp
+  src/estimation/health.cpp
+  src/estimation/association.cpp
+  src/estimation/armor_id.cpp
+  src/estimation/geometry_selector.cpp
+  src/estimation/state_machine.cpp
+  src/estimation/tracker.cpp)
+autoaim_module(decision
+  src/decision/predictor.cpp
+  src/decision/ballistic.cpp
+  src/decision/armor_selector.cpp
+  src/decision/hit_probability.cpp
+  src/decision/aim_adequacy.cpp)
+autoaim_module(control
+  src/control/crc.cpp
+  src/control/command.cpp
+  src/control/protocol.cpp
+  src/control/watchdog.cpp
+  src/control/smoother.cpp
+  src/control/command_guard.cpp
+  src/control/publisher.cpp)
+autoaim_module(mission
+  src/mission/mission_factory.cpp
+  src/mission/target_selector.cpp
+  src/mission/infantry/infantry_mission.cpp
+  src/mission/sentry/sentry_mission.cpp
+  src/mission/button_policy.cpp)
+autoaim_module(pipeline
+  src/pipeline/frame_sync.cpp
+  src/pipeline/queue.cpp
+  src/pipeline/command_slot.cpp
+  src/pipeline/scheduler.cpp
+  src/pipeline/bootstrap.cpp
+  src/pipeline/pipeline.cpp
+  src/pipeline/entry.cpp
+  src/pipeline/offline_tools.cpp
+  src/pipeline/batch_benchmark.cpp
+  src/pipeline/session_annotation.cpp
+  src/pipeline/annotate_session.cpp
+  src/pipeline/run_metadata.cpp
+  src/pipeline/calibration_tools.cpp
+  src/pipeline/uart_adapter.cpp
+  src/pipeline/uart_writer.cpp)
 
 # 报告来源只记录内容和构建参数，不包含配置时间。源码改变会触发重新配置。
 file(GLOB_RECURSE autoaim_provenance_sources CONFIGURE_DEPENDS
@@ -208,10 +232,6 @@ R\"autoaim_build(${autoaim_build_json})autoaim_build\";\n")
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/autoaim_build_information.json"
   CONTENT "${autoaim_build_json}\n")
 target_include_directories(autoaim_pipeline PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
-target_sources(autoaim_vision PRIVATE src/vision/annotation.cpp)
-target_sources(autoaim_vision PRIVATE src/vision/evaluation.cpp)
-target_sources(autoaim_vision PRIVATE src/vision/sequence_evaluation.cpp)
-target_sources(autoaim_mission PRIVATE src/mission/button_policy.cpp)
 autoaim_dependencies(math core)
 autoaim_dependencies(hal core)
 autoaim_dependencies(vision math)
@@ -236,10 +256,14 @@ add_executable(pipeline_metrics tools/pipeline_metrics/main.cpp)
 target_link_libraries(pipeline_metrics PRIVATE autoaim_options)
 
 # CTest 注册及依赖边界检查器；BUILD_TESTING=OFF 时不生成检查脚本。
-function(autoaim_test name source)
+function(autoaim_test_target name source)
   add_executable(${name} ${source})
   target_include_directories(${name} PRIVATE tests)
-  target_link_libraries(${name} PRIVATE autoaim_options ${ARGN})
+  target_link_libraries(${name} PRIVATE ${ARGN})
+endfunction()
+
+function(autoaim_test name source)
+  autoaim_test_target(${name} ${source} autoaim_options ${ARGN})
   add_test(NAME ${name} COMMAND ${name})
   set_tests_properties(${name} PROPERTIES TIMEOUT 30)
 endfunction()
@@ -578,12 +602,8 @@ if __name__ == "__main__":
   set(AUTOAIM_TEST_YOLO11_MODEL "" CACHE FILEPATH
     "Optional explicit armor YOLO11 model for offline CPU tests")
   if(AUTOAIM_OPENVINO AND (AUTOAIM_TEST_YOLOV5_MODEL OR AUTOAIM_TEST_YOLO11_MODEL))
-    add_executable(test_openvino_async tests/contract/test_openvino_async.cpp)
-    target_include_directories(test_openvino_async PRIVATE tests)
-    target_link_libraries(test_openvino_async PRIVATE autoaim_vision)
-    add_executable(test_pipeline_async tests/contract/test_pipeline_async.cpp)
-    target_include_directories(test_pipeline_async PRIVATE tests)
-    target_link_libraries(test_pipeline_async PRIVATE autoaim_pipeline)
+    autoaim_test_target(test_openvino_async tests/contract/test_openvino_async.cpp autoaim_vision)
+    autoaim_test_target(test_pipeline_async tests/contract/test_pipeline_async.cpp autoaim_pipeline)
     if(AUTOAIM_TEST_YOLOV5_MODEL)
       add_test(NAME test_openvino_model COMMAND test_yolov5 "${AUTOAIM_TEST_YOLOV5_MODEL}")
       add_test(NAME test_openvino_async COMMAND test_openvino_async "${AUTOAIM_TEST_YOLOV5_MODEL}")

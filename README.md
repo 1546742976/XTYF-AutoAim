@@ -213,6 +213,10 @@ XTYF-AutoAim/
 例如 Windows 编辑文件、WSL 编译；语义补全可使用构建生成的 `compile_commands.json`。
 不要在 Windows 和 WSL 之间混用同一个构建目录的工具链。
 
+新增模块实现时，将文件加入对应 `autoaim_module(...)` 的集中清单。
+普通测试用 `autoaim_test(...)` 创建并注册；需要按模型条件注册的测试程序用
+`autoaim_test_target(...)` 创建，再由各条件分支注册名称、参数和超时。
+
 如需在其它 CMake 项目中复用，可通过 `add_subdirectory` 引入后链接 `autoaim_vision` 等目标；
 这些目标带有向下的传递依赖，不是“只复制一个 cpp 就能用”。当前没有独立安装/导出的 SDK 包，
 也没有保证任意单模块脱离根 CMake 配置；只构建某个目标仍需满足配置阶段的依赖查找。

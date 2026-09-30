@@ -4,7 +4,7 @@
 
 namespace autoaim::estimation {
 std::vector<AssociationCandidate>
-association_candidates(const Ekf& filter, core::TimePoint predicted_at,
+association_candidates(const StateEstimator& filter, core::TimePoint predicted_at,
                        const GeometryProfile& geometry, const Observation& observation,
                        const MeasurementModel& measurement, const NisGate& gate) {
   std::vector<AssociationCandidate> result;

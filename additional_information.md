@@ -1,5 +1,149 @@
 # XTYF-AutoAim 补充手册：模块、规格与协作约定
 
+<a id="quick-algorithm-swap"></a>
+
+## 快速替换
+
+**所有替换入口集中在根 [CMakeLists.txt](CMakeLists.txt)，六个开关默认均为 `OFF`。**
+默认仍使用原角点精修、IPPE、平移 CV 的 EKF、OpenVINO `LATENCY` 和 deque 队列。
+启用或回退只需重新配置对应构建目录并编译，不修改 cpp/hpp、块注释或估计器别名；
+`config/fast_choose.yaml` 负责运行参数，不负责选择这些编译期算法。
+修改根 CMake 中 `option()` 的默认值只影响新的构建目录；已有目录会沿用缓存，
+必须用下表的 `-D...=ON/OFF` 显式覆盖，或先清除对应缓存项，再重新配置。
+
+| 方案 | CMake 开关与实现位置 | 启用操作 | 回退操作 | 验证入口 |
+| --- | --- | --- | --- | --- |
+| [I1-CONTRAST-IRLS](#alternative-i1-contrast-irls) | `AUTOAIM_I1_CONTRAST_IRLS`；[corner_refine.cpp](src/vision/corner_refine.cpp) | `-DAUTOAIM_I1_CONTRAST_IRLS=ON` | `-DAUTOAIM_I1_CONTRAST_IRLS=OFF` | `--method I1-CONTRAST-IRLS` |
+| [I2-LM](#alternative-i2-lm) | `AUTOAIM_I2_LM`；[pnp.cpp](src/vision/pnp.cpp) | `-DAUTOAIM_I2_LM=ON` | `-DAUTOAIM_I2_LM=OFF` | `--method I2-LM` |
+| [I3-LINEAR-CA](#alternative-i3-linear-ca) | `AUTOAIM_I3_LINEAR_CA`；[bootstrap.cpp](src/pipeline/bootstrap.cpp) | `-DAUTOAIM_I3_LINEAR_CA=ON` | `-DAUTOAIM_I3_LINEAR_CA=OFF` | `--method I3-LINEAR-CA` |
+| [I9-THROUGHPUT](#alternative-i9-throughput) | `AUTOAIM_I9_THROUGHPUT`；[detector_openvino.cpp](src/vision/detector_openvino.cpp) | `-DAUTOAIM_I9_THROUGHPUT=ON`，同时开启 OpenVINO | `-DAUTOAIM_I9_THROUGHPUT=OFF` | `--method I9-THROUGHPUT` |
+| [I9-PREALLOC](#alternative-i9-prealloc) | `AUTOAIM_I9_PREALLOC`；[queue.cpp](src/pipeline/queue.cpp) | `-DAUTOAIM_I9_PREALLOC=ON` | `-DAUTOAIM_I9_PREALLOC=OFF` | `--method I9-PREALLOC` |
+| [ESO](#ekf-与-eso-的替换方法) | `AUTOAIM_USE_ESO`；[state_estimator.hpp](include/autoaim/estimation/state_estimator.hpp) | `-DAUTOAIM_USE_ESO=ON` | `-DAUTOAIM_USE_ESO=OFF` | `--method ESO`，兼容 `verify_eso.py` |
+
+**每个替换点的生产调用只使用一份实现；原算法对照仅供测试。** `AUTOAIM_I9_THROUGHPUT=ON` 与 `AUTOAIM_OPENVINO=OFF`
+同时出现时配置失败。`AUTOAIM_I3_LINEAR_CA=ON` 与 `AUTOAIM_USE_ESO=ON` 也会被拒绝：
+ESO 使用自己的平移 jerk 参数，会覆盖 I3 的实验模型，不能作为有效的 EKF 对照。
+其它组合能配置不代表已经通过组合验证。详细算法、缺口与限制见[后文](#algorithm-alternatives)。
+
+以下在 WSL/Linux 的仓库根目录执行。直接使用 CMake 的独立构建示例：
+
+```bash
+algorithm_builds=$(mktemp -d /tmp/autoaim-algorithm-builds.XXXXXX)
+algorithm_defaults=(
+  -DAUTOAIM_I1_CONTRAST_IRLS=OFF -DAUTOAIM_I2_LM=OFF
+  -DAUTOAIM_I3_LINEAR_CA=OFF -DAUTOAIM_I9_THROUGHPUT=OFF
+  -DAUTOAIM_I9_PREALLOC=OFF -DAUTOAIM_USE_ESO=OFF
+)
+# 单独选择 I1；其它方案使用表内对应 ON 参数。两个 I9 的双模型验收命令见下方。
+cmake -S . -B "$algorithm_builds/i1" -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_STANDARD=17 \
+  -DBUILD_TESTING=ON -DAUTOAIM_OPENVINO=OFF -DAUTOAIM_HIKROBOT=OFF \
+  "${algorithm_defaults[@]}" -DAUTOAIM_I1_CONTRAST_IRLS=ON
+cmake --build "$algorithm_builds/i1" --parallel 2
+ctest --test-dir "$algorithm_builds/i1" --output-on-failure
+# 回退此构建目录：六个候选恢复 OFF，重新编译和验证。
+cmake -S . -B "$algorithm_builds/i1" "${algorithm_defaults[@]}"
+cmake --build "$algorithm_builds/i1" --parallel 2
+ctest --test-dir "$algorithm_builds/i1" --output-on-failure
+```
+
+需要保留源码摘要、完整命令和日志时使用统一验证脚本。脚本复制当前源码，但不改写副本源码；
+每次显式关闭六个候选，再仅启用指定项，由 CMake 注册相应专项测试。输出目录须全新且在源码之外：
+
+```bash
+swap_runs=$(mktemp -d /tmp/autoaim-alternatives.XXXXXX)
+python3 tests/verify_alternatives.py --self-test
+python3 tests/verify_alternatives.py --source . --method DEFAULT \
+  --output "$swap_runs/default" --jobs 2
+python3 tests/verify_alternatives.py --source . --method I1-CONTRAST-IRLS \
+  --output "$swap_runs/i1-contrast-irls" --jobs 2
+python3 tests/verify_alternatives.py --source . --method I2-LM \
+  --output "$swap_runs/i2-lm" --jobs 2
+python3 tests/verify_alternatives.py --source . --method I3-LINEAR-CA \
+  --output "$swap_runs/i3-linear-ca" --jobs 2
+python3 tests/verify_alternatives.py --source . --method ESO \
+  --output "$swap_runs/eso" --jobs 2
+
+# 本机已有模型路径示例；其它机器改为实际 XML，配套 BIN 必须同时存在。
+model_dir='/mnt/e/大学/巡天御风/视觉组培训/RM2026-AutoAim/assets'
+python3 tests/verify_alternatives.py --source . --method I9-THROUGHPUT \
+  --output "$swap_runs/i9-throughput" --jobs 2 \
+  --openvino-dir /usr/lib/cmake/openvino2026.3.1 \
+  --yolov5-model "$model_dir/yolov5.xml" --yolo11-model "$model_dir/yolo11.xml"
+python3 tests/verify_alternatives.py --source . --method I9-PREALLOC \
+  --output "$swap_runs/i9-prealloc" --jobs 2 \
+  --openvino-dir /usr/lib/cmake/openvino2026.3.1 \
+  --yolov5-model "$model_dir/yolov5.xml" --yolo11-model "$model_dir/yolo11.xml"
+```
+
+`tests/verify_eso.py` 保留原 CLI，作为统一脚本的 ESO 兼容入口。查看各目录的 `summary.json`、
+`CMakeCache.txt`、构建报告及测试日志；构建报告包含六个开关的实际值。`/tmp` 材料需归档。
+统一脚本默认使用 C++17 Debug，可追加 `--build-type Release`；本次集中入口验收使用
+C++17 Release，实际结果以记录为准。脚本显式设置全部六项，不受源码中默认值改动影响。
+六个候选均已单项构建并通过相关全量回归，标记为“可替换且已验证（软件）”。
+当前集中选择版本的环境、源码指纹与测试数见[集中入口验收](build_history.md#central-selection-20260930)，
+不沿用此前手动解除注释版本的通过记录。软件验证不代表目标 NUC 性能或实物效果。
+
+<a id="fast-choose"></a>
+
+## 快速调参：config/fast_choose.yaml
+
+日常参数统一在 [fast_choose.yaml](config/fast_choose.yaml) 调整，**启动读取，修改后重启生效**。
+从仓库根目录运行：
+
+```bash
+build-debug/autoaim_node --config config/fast_choose.yaml
+```
+
+- `active_detector` 选择 `traditional`、`yolov5` 或 `yolo11`，默认 yolov5；
+  默认运行需要 OpenVINO 与 `detectors.yolov5.model_path` 指定的模型及配套权重。
+  对应 `detectors.<类型>.config_file` 指向基础契约，阈值和模型路径直接写在同组。
+- `common` 是输入、检测颜色、跟踪、预测、选板、控制及容量参数的唯一来源；配置注释标明
+  单位、合法范围及增减影响。基础配置保留标定、几何、身份、角点、板型、坐标与重力契约。
+- `eso` 的带宽与 jerk PSD 经 Tracker 传入估计器。默认 EKF 不使用这些参数；ESO 启用方式
+  由 CMake 的 `AUTOAIM_USE_ESO` 控制，调参文件不能选择编译期算法。
+- 原 `--config config/offline/armor.yaml`、`yolov5.yaml`、`yolo11.yaml` 固定选择其检测器，
+  忽略快调文件的 `active_detector`，但使用同一份快调参数。日常一键切换请使用上面的统一入口。
+
+快调格式标记为 `fast_choose_version: 1`。基础文件通过 `fast_choose_file: ../fast_choose.yaml`
+引用它；两者的同一调参叶子不能重复定义，不存在“改了却被另一份默认值覆盖”的优先级。
+未知快调键、重复键、缺项及非法参数在启动时报告。没有快调引用的旧完整配置继续兼容。
+只检查实际选择的模型文件与后端，traditional 不要求备用 YOLO 权重存在。
+
+相对路径按**声明文件**解析：快调里的 `offline/armor.yaml`、`../models/yolo11.xml` 和
+`../out/synthetic/events.yaml` 相对 `config/`；基础文件的标定/几何引用相对 `config/offline/`。
+CLI `--input` 与批量 `--dataset` 仍覆盖最终输入，采用原有工作目录语义。配置文件不递归继承。
+迁移的是离线默认值，调整按钮模式或开火请求不会提供合格证据、提升资格或开放设备入口。
+
+批量命令在运行第一项之前预加载全部配置，同一路径快调文件共享一份不可变启动快照。
+`run_metadata_schema_version: 3` 同时记录入口、基础和快调原文/字节指纹、有效配置及估计器，
+有效输入反映 CLI 覆盖；运行中改文件不改变已加载快照，下次启动才生效。只改注释也会改变
+文件指纹，但不改变有效参数。标定报告和模型仍沿用原有来源记录规则。
+
+## EKF 与 ESO 的替换方法
+
+**默认 `AUTOAIM_USE_ESO=OFF` 使用 EKF。** 开关为 `ON` 时 CMake 选择 ESO，统一头文件
+据编译定义选择 `StateEstimator`；不需要手动修改别名或源码。公共状态保持 12 维。
+
+先运行[快速替换](#quick-algorithm-swap)中的 `--method ESO` 独立验证，也可使用兼容命令：
+
+```bash
+# 输出目录必须尚不存在，且位于项目目录之外。
+python3 tests/verify_eso.py --source . --output /tmp/autoaim-eso-check --jobs 2
+```
+
+兼容入口同样只通过 CMake 开关选择算法，不改变原源码或副本源码。
+`BUILD_TESTING=ON` 且 `AUTOAIM_USE_ESO=ON` 时自动注册 `test_eso`；
+EKF 专项仍直接测试 `Ekf`。切回时将同一构建目录的 `AUTOAIM_USE_ESO` 设为 `OFF`，
+重新编译并运行 CTest。CMake 缓存会保留上次选择，不能以省略参数代替显式回退。
+
+ESO 参数来自 `config/fast_choose.yaml` 的 `eso` 分组，仍使用现有参数接口；
+设置参数不会自行启用 ESO。I3-LINEAR-CA 与 ESO 同时启用会在配置阶段报错。
+ESO 只接受当前 6 维完整位姿观测，使用平移 CA 与批先验门控；默认 EKF 保持平移 CV。
+两者数值结果不要求相同。实验带宽、融合规则及限制见 [§5.6](#experimental-eso)，
+当前集中选择版本的验收见[构建历史](build_history.md#central-selection-20260930)。
+
+---
+
 [README.md](README.md) 负责入门、构建运行、配置工具和简明导航；本手册集中说明九模块的文件职责、
 技术契约、协作规则及实施历史。[build_history.md](build_history.md) 集中保存从 README 迁出的
 构建日志、测试矩阵和逐批修复记录。文档互相链接，不重复维护逐文件说明。
@@ -317,11 +461,31 @@ CLI 对已存在输出目录的拒绝是另一层检查，不能与上述文件�
 
 ## A5. 工作方式
 
+Docker 环境打包仅增加构建/安装/离线使用入口；默认不包含海康 SDK、设备映射或
+模型数据。SDK 只通过独立只读构建输入做编译检查，不因此开放硬件入口。
+
+容器不改变九模块职责、配置解释或算法候选启用规则。根 CMake 的 `Runtime` 组件只安装
+11 个既有入口、显式列出的示例配置和生产构建标识，不导出静态库、头文件、测试或打符目标。
+示例配置包含公共的 `config/fast_choose.yaml`，保持离线配置的 `../fast_choose.yaml` 引用。
+`tests/test_install_layout.py` 验证安装、搬移目录后启动与回放；不需要 Docker 或 root。
+`tools/container/runtime-packages.sh` 固定开发镜像实际安装的运行包版本，显式保留
+OpenVINO CPU 插件和 IR 前端；不依据静态链接清单删除动态加载组件。
+`tools/container/verify.sh` 只在明确调用时执行容器矩阵；`runtime-smoke.sh` 为外部挂载的
+运行镜像检查，不安装进运行镜像。开发容器 `/tmp` 允许执行安装搬移测试及安装器替身，
+保留 nosuid/nodev；运行容器不授予该临时目录执行权限。该区别不改变算法或硬件权限。
+基础镜像摘要、包清单与程序构建标识分开保存，
+同镜像同路径重复性不等于跨编译器/依赖版本的全文报告一致。
+Windows 绑定目录可能缺少标注工具的原子无覆盖重命名能力；工具保持失败语义，
+容器使用 Linux 卷完成发布后再显式导出产物，不将普通复制冒充原子发布。
+操作命令见 [README §2.4](README.md#24-docker-环境)，实际结果见
+[Docker 构建历史](build_history.md#docker-20260930)。
+
 - **先契约、再实现。** 每个模块先把接口与数据结构定下来，能被别的模块编译引用，再写实现。
 - **代理不自行提交。** 改动交用户审查，未经明确授权不执行 Git 提交。
 - **禁止代理运行连硬件程序。** 只允许无硬件构建、测试与回放；实机验收由人执行。
 - **一次只动一个关注点。** 不要把"顺手重构"混进功能改动。
 - **不写投机抽象。** 不要加"以后可能有用"的接口、插件系统、配置项。CKF 是离线对照，不需要滤波器插件框架。
+- **候选默认由 CMake 关闭。** 后续新增算法候选须保持替换对象的接口与数据语义，将完整实现及必要依赖放在对应编译期分支，并在根 CMake 登记默认 `OFF` 的唯一选择开关；不再通过手动修改 cpp/hpp 注释或别名切换。启用前在独立构建目录运行候选专项与回归；默认构建不替代候选验证。同步快速替换表、条件测试注册和构建报告开关值；缺接口、数据或硬件的方案只记录缺口，不生成空壳。
 - **不做大重写。** 旧项目里已有成熟实现的安全组件（如停在传输边界的许可检查、异步检测的单槽覆盖与世代校验）应当被**移植**，不是重新发明。
 - **每次修改同步文档。** README 与本手册各自的维护范围及状态表述统一见 §10.3，不借文档改动扩展任务范围。
 - **按当次授权推进。** 已授权任务内按接口、实现、测试、验证逐项完成，不逐文件重复确认；遇到关键矛盾、资料缺失或验证失败时停在当前项。§11 只记录过去阶段，不是自动执行指令。
@@ -746,11 +910,59 @@ p_i(t) = c(t) + B(a) R_z(θ(t)) o_i
 
 状态按**分量名**访问 **[定]**：否则替换运动模型或改变状态维数后，按下标访问的下游会静默取错分量。
 
+公共状态现为 12 维：`x,y,z,vx,vy,vz,phase,omega,alpha,ax,ay,az`。原九个索引不变，
+新增的 `acceleration_mps2` 默认零值。默认平移 CV 将 `ax/ay/az` 的状态和协方差行列
+双向清零；实验平移 CA 传播 `p+v·dt+a·dt²/2`、`v+a·dt`、`a`，采用连续白 jerk
+的完整积分噪声，保留位置/速度/加速度交叉协方差。角 CV/CA 的切换独立于平移模式，
+不会抹除仍然激活的平移加速度。几何位姿量测对新增三维的当前时刻导数为零。
+
+`tracker.initial_variance` 按上述顺序接受 12 项非负有限方差，也兼容原 9 项并追加
+三个 `1 m²/s⁴`；默认 CV 随后清零失活项。其他长度或负数、非有限数拒绝。
+显式启用平移加速度模式时，初次激活的不确定度独立初始化；关闭时清除对应交叉项。
+不可变快照携带完整状态、协方差和匹配的运动模型，未来预测使用同一模型。
+
 ### 5.6 滤波与一致性检验 **[定]**
 
 - **EKF 为默认数值实现**；CKF 作为**相同输入下**的离线对照，用于观察强非线性与大姿态变化下的残差、协方差与稳定性。
 - CKF **不是**错角点、时间偏差、板身份混淆或错误旋转轴的补救手段；若只增加计算量而无改善，不替换 EKF。
 - **第一版目标估计主路径选 EKF，不默认加入 ESO。** 这是阶段取舍，不是“目标不由我们驱动，所以 ESO 数学上不可用”的结论。ESO 或跟踪微分器用于短时加速度/总扰动估计，只作为后续有界、可验证的对照候选；云台控制环的扰动补偿是另一职责，不能与目标状态估计混为一谈。
+
+<a id="experimental-eso"></a>
+
+**实验 ESO（默认 CMake 关闭）**：`StateEstimator` 根据 `AUTOAIM_USE_ESO` 的编译定义选择，默认指向 `Ekf`。
+`Eso` 提供相同的构造和 `state/covariance/motion/predict/innovation/update/change_motion`
+接口及值复制语义；`Innovation`、`UpdateReport` 共用。它是目标运动估计器，不包含控制器。
+
+- 平移使用三阶位置/速度/加速度 ESO；角 CV 使用二阶相位/角速度，角 CA 使用三阶。
+  ESO 复制传入角运动模型并启用平移 CA，保留预测时域和角加速度约束。
+- `EsoOptions` 的实验初值为平移、转动带宽各 `10 rad/s`，平移 jerk 功率谱密度
+  `1 m²/s⁵`；额外构造重载允许离线实验显式传参。这些不是设备调参结果。
+- 使用[离散极点配置](https://arxiv.org/html/2211.07309v2)而非连续增益直接乘固定帧率。
+  `p=exp(-ωT)`；二阶增益为 `[1-p²,(1-p)²/T]`，三阶为
+  `[1-p³,3(1-p)²(1+p)/(2T),(1-p)³/T²]`。实现用 `expm1` 与 `(1-p)/T`
+  处理小时间步。首次 `T=0` 是独立初始化规则：只校正可观测位置和相位，不估导数。
+- 首版只接受 6 维完整位姿残差及当前几何结构的雅可比：非零列仅允许中心位置和相位，
+  噪声须正定，四维加权信息矩阵须可解。仅位置、退化或不支持的量测明确失败，不回退 EKF。
+- 每次正时间 `predict` 固定该批状态 `x₀`、协方差 `P₀`，增益使用距上次有效校正的累计时间；
+  `predict(0)` 不开启新批。同批后续残差回锚为 `r₀=r+H·difference(x,x₀)`，
+  用 `J=H[:,x,y,z,phase]` 累计 `A=ΣJᵀR⁻¹J`、`b=ΣJᵀR⁻¹r₀`。
+  各板沿用 Tracker 已缩放的噪声，但噪声缩放不能代替批量处理固定观测器增益。
+- 每次接受观测均从同一先验重算 `x=x₀+G·solve(A,b)`，
+  `P=(I-GC)P₀(I-GC)ᵀ+G·solve(A,I)·Gᵀ`，其中 `C` 选择四个可观测坐标。
+  相位增量按环绕处理，角加速度按原模型约束；这是一阶局部误差传播，不宣称全局统计一致性。
+- `innovation` 与 `update` 都在吸收当前观测前使用 `r₀` 和 `H P₀ Hᵀ+R` 计算同一 NIS。
+  此处为批先验门控，与 EKF 的逐观测门控不同；回锚是一阶近似，不保证非线性观测严格顺序无关。
+  拒绝或失败保留输出、模型、计时及已融合信息。模型切换先映射后验再清批；已经有效校正过的
+  滤波器在零时间模型切换后，需要正时间预测才能再次更新。
+
+`eso.hpp` 的完整算法及专用包含由 `AUTOAIM_USE_ESO` 编译定义控制。
+`EsoOptions` 仍是正常编译的共享参数类型，快调配置通过 `TrackerOptions` 和构造辅助函数
+传递；参数装载不会启用 ESO，也不改变已有三参数构造的默认值。
+`tests/verify_alternatives.py --method ESO` 与兼容入口 `tests/verify_eso.py` 在独立副本中
+通过 CMake 选择 ESO，保持副本源码不变，运行 OpenVINO OFF 验证；记录源码摘要、命令、
+退出码、注册清单和失败输出，并检查原源码未被修改。CMake 按开关注册 `test_eso`；
+不能将默认构建通过当成 ESO 已运行。
+统一 12 维矩阵会影响计算规模；不以静态结构宣称性能、精度或 NUC 验收收益。
 
 一致性检验 **[定]**：
 
@@ -1568,6 +1780,201 @@ Debug 最后增量确认没有待重编译项或时钟偏差警告。
 相机模式调整仍待单独审批，不因本次离线通过而开放。
 命令、日志、批次快照、diff 和回滚依据见
 [修复执行记录](out/repair-20260930-v1/STATUS.md)。
+
+<a id="algorithm-alternatives"></a>
+
+## 算法替换详细手册（2026-09-30）
+
+[快速替换与命令](#quick-algorithm-swap) 位于本文最前面；方案依据与审核修正见
+[possible_method.md](possible_method.md)。本章覆盖 I0–I10 和 A–C，区分完整的局部候选与
+尚需接口/数据的完整提案。算法公共接口、运行配置与协议保持不变；根 CMake 统一控制编译期选择，六项默认均为 OFF。
+
+### 统一切换及回退规则
+
+1. 使用全新的构建目录，明确传入六个开关的 OFF 值，再仅将本次候选设为 ON；
+   根 CMake 选择同接口实现并注册该候选专项，源文件保持不变。
+2. 统一验证脚本复制当前工作区（含未提交源码），不改写副本；保存源码摘要、实际配置、
+   构建/测试命令及结果。`DEFAULT` 关闭全部候选，`ESO` 使用统一选择规则。
+3. 回退时在同一构建目录显式将对应开关设为 OFF，重新编译和执行 CTest；
+   CMake 缓存保留旧值，仅省略参数或修改 `option()` 默认值不会覆盖已有缓存。
+   无需移动函数或更改注释、别名。
+4. 差分测试使用 `tests/support` 中固定保存的原始实现，只链接测试目标；
+   不由脚本提取或改写生产代码，也不向生产模块增加第二套公共入口。
+5. 构建报告记录六个开关。被 CMake 拒绝的组合不能启用；其它组合仍需另行验证。
+
+<a id="alternative-i1-contrast-irls"></a>
+
+### I1-CONTRAST-IRLS：中心轴对比度加权精修
+
+替换 [corner_refine.cpp](src/vision/corner_refine.cpp) 的完整 `refine_corners`；仍接收
+`const core::Image&`、`const Detection&`、`const RefinementOptions&` 并返回 `RefinementResult`。
+`AUTOAIM_I1_CONTRAST_IRLS=ON` 选择完整候选，OFF 选择原实现。
+
+筛选像素、ROI 和初始 Huber 轴沿用原实现，基础权重为 `max(1, 通道差)/255`；
+使用 Huber 截断 `1.345 px` 的加权 TLS，最多 10 轮，轴角变化小于 `1e-6 rad`
+且中心变化小于 `1e-4 px` 时结束。迭代上限只表示使用最后有效结果，不声明已收敛。
+全部对比度权重相等时，检查退化后复用原 Huber 与原浮点端点计算，保持等权基线数值；
+非等权才执行新增 IRLS。像素筛选的浮点边界也与原实现一致。
+非有限权重/统计、无空间分散或主轴不可确定均触发原整体失败返回。
+
+端点仍是全部原筛选点的轴投影 min/max，不重排物理索引、不强制两条图像灯条平行等长；
+最终沿用方向、长度和 `maximum_shift_px` 限制。一侧失败保留全部原角点并将可靠性置为 false，
+成功也不把原来不可靠的角点升级。其它 Detection 字段和输入像素不变。
+此项只比较局部中心线拟合，不能证明模型标签、板外缘或实物尺寸已经匹配。
+
+启用/回退只改变 CMake 开关。专项使用固定保存的原函数
+`refine_corners_baseline`，比较暗色平行污染下的真实轴偏差，并覆盖蓝灯、透视、索引翻转、
+stride 与退化输入；软件及实物验证状态分开记录。
+
+<a id="alternative-i3-linear-ca"></a>
+
+### I3-LINEAR-CA：默认 EKF 的平移恒加速度对照
+
+替换 [bootstrap.cpp](src/pipeline/bootstrap.cpp) 中 `cv_model` 与 `ca_model` 两个构造声明，
+由 `AUTOAIM_I3_LINEAR_CA` 同时选择两个构造；`PipelineConfig` 与估计器接口不变。
+仍使用 EKF，两个现有角运动模型分别追加 `with_linear_acceleration(1.0)`，保留角噪声、
+角加速度上限和时间范围。`1.0 m²/s⁵` 是候选内部实验白 jerk PSD，不是经过设备标定的参数。
+
+原 `motion.linear_accel_psd` 的单位是 `m²/s³`，仍读取和校验，不被偷换为 jerk；
+本候选平移 CA 实际使用上述独立常数。12 维状态、加速度初始方差及完整白 jerk 离散传播
+均复用现有代码。Tracker 发布实际滤波模型，`predict_future` 使用快照中的同一模型，
+不单独改写快照或使用另一条外推公式。此项没有 IMM 权重、相位多峰或混合快照。
+
+一个 CMake 开关成组选择两个声明。专项检查真实装配、恒加速度估计、
+角 CV/CA 切换对平移加速度及协方差的保留、快照预测一致性与拒绝/时间边界原子性。
+CMake 拒绝与 ESO 同时启用；后者会使用自身的平移 CA 和 jerk 参数覆盖 I3 选择，
+不能把这种组合视为有效的 EKF 平移 CA 对照。
+
+<a id="alternative-i2-lm"></a>
+
+### I2-LM：IPPE 双初值的角点重投影精修
+
+替换点为 [pnp.cpp](src/vision/pnp.cpp) 中完整函数，原接口保持：
+
+```cpp
+std::vector<PoseCandidate> ippe_candidates(const Detection& detection,
+                                         const PlateDimensions& dimensions,
+                                         const Calibration& calibration);
+```
+
+`AUTOAIM_I2_LM=ON` 选择完整 LM 候选，OFF 恢复原 IPPE。候选保留等价板系、IPPE 双初值，
+分别使用 `solvePnPRefineLM`（最多 20 次、终止精度 `1e-6`），再重算重投影误差、正深度与朝向。
+优化无效、负深度、四角 RMS 或最大单角重投影误差任一增大时保留相应原候选；
+不同初值优化合并时保留原候选组。代码中的合并容差仅用于数值判重，不是实物质量门限。
+候选排序后仍由 `solve_pose` 的现有门限、协方差、同板先验和证据条件决定有效性与可靠性。
+
+这是 **I2 的角点重投影 LM 子方案**，没有逐边梯度权重、历史噪声标定或生产同板先验回传。
+不会因为优化残差变小就升级角点/设备证据。接口与算法依据见
+[OpenCV PnP 文档](https://docs.opencv.org/4.x/d5/d1f/calib3d_solvePnP.html)。
+CMake 在启用 LM 且构建测试时注册专项；原函数固定保存在 `tests/support` 中作为测试基线，
+生产代码不增加第二套入口。
+
+<a id="alternative-i9-throughput"></a>
+
+### I9-THROUGHPUT：OpenVINO 性能提示对照
+
+替换点为 [detector_openvino.cpp](src/vision/detector_openvino.cpp) 中原 `compiled = core.compile_model(...)`
+语句，由 `AUTOAIM_I9_THROUGHPUT` 选择。启用时必须同时开启 `AUTOAIM_OPENVINO`，否则配置失败。
+唯一算法选项差别是 `ov::hint::PerformanceMode::LATENCY` → `THROUGHPUT`；
+`options.device`、请求池容量、缓冲所有权及完成结果接纳契约不变。
+
+这只是 I9 的运行时提示实验，不包含无锁队列、线程亲和、量化或自动异构调度实现。
+已有 `detector.device` 可选择后端，CPU 是默认值。吞吐提示不保证源数据年龄或 P95 降低，
+需要目标 NUC 同机、同素材、同模型对照后再选择。
+
+<a id="alternative-i9-prealloc"></a>
+
+### I9-PREALLOC：保留队列行为的 pending 容器预分配
+
+`AUTOAIM_I9_PREALLOC` 成组选择 [queue.cpp](src/pipeline/queue.cpp) 中的 `FrameQueue::State`、
+`Activity` 和队列方法：ON 使用 vector 候选，OFF 使用原 deque 实现。
+公共 `FrameQueue`/`FrameTask`/`QueueOptions` 不变。
+
+pending 使用 vector，构造时预留 `min(pending_capacity, pool_capacity)`，因为 pending
+不可能超过图像池容量。取任务仍从尾部领取并保留旧积压；容量满时从头部淘汰，purge
+按原顺序稳定压缩并逐个累计同样的丢弃原因。mutex、在途限制、额外读者租约、跨线程释放、
+reset/close 和 `ResultAdmission` 语义不变。头部移除/清理允许 O(capacity) 移动。
+
+它只减少 pending 容器分配，CapturedFrame、Activity 等仍有分配；不是无锁或全链零分配。
+`tests/support/queue_prealloc_baseline.hpp/.cpp` 固定保存原实现，仅向专项测试提供
+`BaselineFrameQueue`/`BaselineFrameTask` 对照，比较出队、
+丢弃、在途、池占用和像素寿命；墙钟耗时数值不要求逐字相同。另运行 YOLOv5/YOLO11
+同步、异步、整链与缓冲寿命回归。性能是否改善需目标 NUC 同机比较。
+
+启用或回退只修改 CMake 开关；条件编译始终只保留一个内部 State 和一套方法定义。
+本轮单独使用默认 LATENCY，不与 I9-THROUGHPUT 叠加作为验收结论。
+
+### 其它方案的替换条件
+
+以下剩余部分均为“待接口/资产”，没有可供 CMake 选择的完整算法，也不列出虚假的启用命令。
+后续条件具备时须重新生成完整候选，按统一规则验证和回退；不得借已有局部候选标记为完成。
+
+| 方案 | 当前接口与缺口 | 后续接入步骤 | 验证入口/场景 |
+| --- | --- | --- | --- |
+| I0 证据通路 | `Evidence` 与标定报告装载已存在；角点、几何、控制装配缺来源绑定 | 复用 `intrinsic_report_file` / `extrinsic_report_file`；replay 测试用 `MeasurementReport::evaluate` → `Evidence::from_report`；真实装配另设计报告绑定，不加布尔升级开关 | `test_evidence`、`test_bootstrap`、`test_calibration_report`；错设备/配置与 host 域拒绝 simulation |
+| I1 物理精修 | `refine_corners` 有图像，但无物理尺寸/投影模型；IRLS 仍为中心线端点 | 核验模型端点标签与实物尺寸，再设计一致的投影和端点输入 | `test_corner_refine`、`test_pnp`；真实标签及独立 pose reference |
+| I2 梯度/先验/噪声 | PnP 无原图/边权重；同板先验 API 已有但当前检测缺可信板身份；协方差计算无历史 | 提供边样本；建立当前检测到物理板的可信关联及曝光坐标转换；定义按设备/标定/模型隔离的统计所有者与重置 | `test_pnp`、`test_pose_quality`；错目标/板/世代/时间先验拒绝、独立残差集 |
+| I3 IMM/多峰 | 当前快照只有选中状态/模型；I3-LINEAR-CA 和 ESO 均不输出混合权重 | 先定义模型集、圆周分量、权重及快照，再同步未来混合传播 | `test_tracker`、`test_motion_selection`；阶跃/变转速、多峰区分及预测一致性 |
+| I4 四维/自适应 | position 是 3 维；4 维需真实残差/H/R及类型；关联筛选和同曝光多次更新不能直接当无偏历史 | 显式扩量测语义；定义可信样本、曝光边界与历史重置；预测包络另收校准集 | 按实际维度做 NIS、有真值做 NEES；同时统计误关联/拒绝/失锁，禁止当前残差放宽当前门控 |
+| I5 命中概率 | `ImpactMargin`/`MarginOptions` 表达 kσ 边距，缺概率/η；现有噪声传播已存在 | 扩概率与阈值契约，明确分布和二维相关积分，再用打靶数据校准 | 高相关/奇异协方差/尾概率与蒙特卡洛对照；独立打靶校准 |
+| I6 时机搜索 | `fire_at` 是预测值，发布链无未来执行、取消或到期复检 | 先设计决策到执行的时间契约及有限窗口，再实现择时 | 延迟/丢帧、等待期间目标失效与许可撤销；检查真实执行时刻 |
+| I7 伺服辨识 | `AimAdequacy` 仅检查实测反馈；缺命令/发送结果/反馈历史和辨识状态 | 收集同时间/坐标序列，辨识有界响应和延迟不确定度，再评估前馈 | 合成响应与设备阶跃/正弦实验；规划参考不能替代实测反馈 |
+| I8 采集链 | 静态 ROI/曝光/格式已配置；ROI 须与标定几何一致，binning/decimation 当前为 1；tick 未映射 host 时钟 | 核验型号/带宽/照明/ROI 标定，建立硬件时间映射后再研究动态 ROI/触发 | `test_camera_disconnected` 为软件检查；相机实测曝光中点、抖动、吞吐、图质和 P95，不保证 200–249 fps |
+| I9 设备/无锁/INT8 | `options.device` 可配置；无锁涉及共享池/租约；INT8 缺资产 | 设备沿用现有配置；亲和先取 NUC 拓扑和允许 CPU 集合；无锁另设计同步；固定 NNCF/OpenVINO 工具链及量化/独立验证集后生成同 I/O IR，由 `model_path` 替换 | 双模型同步/异步/缓冲回归；同机吞吐、源年龄、丢帧与整链 P95；量化另比较精度 |
+| I10 数据闭环 | 录制、标注和批量评测接口已有；缺本轮真实素材/审核标签/设备真值 | 使用下方现有命令；多配置可做有限网格比较，调参集与验收集分开；不重复开发工具 | 指纹/审核绑定、P/R、角点与合格位姿真值误差；普通录像不能替代 I5/I7 的专项实验 |
+| A 位姿回归 | `DetectionBatch` 只有二维检测，无位姿/协方差输出；缺训练/导出与校准资产 | 准备数据和模型，设计检测+PnP 联合替代边界及输出契约 | 独立六自由度真值、尺度/坐标一致性、分布外和不确定度检查 |
+| B 学习残差 | `predict_future` 接收只读单峰快照，缺轨迹特征和模型资产 | 定义历史输入、训练/导出、残差与不确定度契约；常数补偿不算学习 | 独立轨迹、多步误差、分布外失效及协方差一致性 |
+| C 滑窗/因子图 | Tracker 无相机标定/投影输入；单存姿态历史不足联合重投影 | 定义投影、窗口、边缘化、跨世代清理及联合协方差预算 | 含跨帧真值的遮挡/歧义/重置场景和计算预算；不把单帧 LM 称为滑窗 |
+
+### I0、I8、I9、I10 的现有入口
+
+I0 的报告字段在标定 YAML 中使用，不是开启生产可靠性的通用开关。已有软件检查可运行：
+
+```bash
+ctest --test-dir build-debug --output-on-failure \
+  -R '^(test_evidence|test_bootstrap|test_calibration_report|test_camera_disconnected)$'
+```
+
+I8 复用 `config/hardware/camera.yaml` 的静态选项，须先满足设备/标定条件；公共硬件运行
+入口仍有现有限制。I9 在独立配置副本中改变 `detector.device` 或同 I/O 的 `detector.model_path`；
+本轮不假定 GPU/AUTO 可用，也不硬编码 CPU 亲和核号。实际量化产物尚未生成。
+
+I10 使用已有离线录制和标注流程。以下 `/path` 替换为实际来源，输出必须全新；
+标注发布使用 WSL 原生文件系统，不能以 `/mnt/e` 支持原子发布为前提：
+
+```bash
+dataset_runs=$(mktemp -d /tmp/autoaim-dataset.XXXXXX)
+build-debug/offline_replay --config /path/config.yaml --input /path/events.yaml \
+  --output "$dataset_runs/commands.tsv" --record-session "$dataset_runs/session"
+build-debug/annotate_session --export "$dataset_runs/draft" --session "$dataset_runs/session"
+# 人工按物理 TL/TR/BR/BL 标注、核验，并设置 reviewed；本命令不替代人工审核。
+build-debug/annotate_session --check --session "$dataset_runs/session" \
+  --annotations "$dataset_runs/draft/annotations.yaml" --output "$dataset_runs/review"
+build-debug/annotate_session --apply --session "$dataset_runs/session" \
+  --annotations "$dataset_runs/draft/annotations.yaml" --output "$dataset_runs/labeled"
+build-debug/bench_detector --dataset "$dataset_runs/labeled/events.yaml" \
+  --config /path/config-a.yaml --config /path/config-b.yaml --iou 0.5 \
+  --output "$dataset_runs/comparison"
+build-debug/pipeline_metrics "$dataset_runs/commands.tsv" --fire-age-s 0.08
+```
+
+上述录制回放已有输入，不等于采集了新的实机素材；`/tmp` 产物需归档。
+有合格独立位姿真值时才额外提供 `--pose-reference`、`--pose-position-limit-m` 和
+`--pose-rotation-limit-rad`；没有时保留不产生位姿指标的状态。
+
+### 组合与验证状态
+
+默认版本与六个候选分别使用独立配置验证，普通默认构建不证明候选分支已经运行。
+I9-THROUGHPUT 要求 OpenVINO ON；I3-LINEAR-CA 与 ESO 互斥，二者不构成有效组合。
+其它开关组合也不能借单项通过记录认定通过。ESO 只接受当前 6 维完整位姿观测，
+不能直接与 I4 的四维提案组合。许可来源、源曝光时间、不可变快照和模块依赖方向继续遵循原契约。
+
+当前六个候选均已完成单项软件验收，配置、结果与证据统一见
+[集中入口验收](build_history.md#central-selection-20260930)；未实现方案仍为“待接口/资产”。
+此前[首轮](build_history.md#algorithm-alternatives-20260930)与
+[剩余候选](build_history.md#remaining-alternatives-20260930)记录针对当时手动解除注释的版本，
+不能代替本次 CMake 条件分支、专项注册和组合拒绝检查。目标 NUC 性能、设备效果与真实精度
+仍需独立实测，不以软件回归替代。
 
 ## 附：一句话概括
 

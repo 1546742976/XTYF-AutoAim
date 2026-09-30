@@ -8,7 +8,7 @@ namespace {
 constexpr double infinity = std::numeric_limits<double>::infinity();
 
 struct Hypothesis {
-  Ekf filter;
+  StateEstimator filter;
   HealthMonitor health;
   double cost = infinity;
   bool updated = false;
@@ -19,7 +19,8 @@ struct Hypothesis {
 
   Hypothesis(TargetState state, const TrackerOptions& options,
              std::shared_ptr<const MotionModel> motion)
-      : filter(std::move(state), options.initial_covariance, std::move(motion)),
+      : filter(make_state_estimator(std::move(state), options.initial_covariance,
+                                     std::move(motion), options.eso)),
         health(options.health) {
   }
 };

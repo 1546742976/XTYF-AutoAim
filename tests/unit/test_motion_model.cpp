@@ -32,5 +32,18 @@ int main() {
     CHECK((second.value().covariance - direct.value().covariance).norm() < 1e-12);
     CHECK(!model.propagate(state, estimation::StateCovariance::Identity(), core::Seconds(-0.1)));
     CHECK(!model.propagate(state, estimation::StateCovariance::Identity(), core::Seconds(1.1)));
+
+    static_assert(estimation::state_dimension == 12);
+    static_assert(estimation::component_index(estimation::StateComponent::alpha) == 8);
+    static_assert(estimation::component_index(estimation::StateComponent::ax) == 9);
+    auto accelerated = state;
+    accelerated.acceleration_mps2 = {1, -2, 3};
+    const auto delta = estimation::state_difference(accelerated, state);
+    CHECK(delta.head<9>().norm() == 0);
+    CHECK((delta.tail<3>() - accelerated.acceleration_mps2).norm() == 0);
+    CHECK(estimation::state_difference(estimation::add_state_delta(state, delta), accelerated)
+              .norm() == 0);
+    accelerated.acceleration_mps2.x() = std::numeric_limits<double>::quiet_NaN();
+    CHECK(!estimation::state_valid(accelerated));
   });
 }

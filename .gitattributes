@@ -1,2 +1,5 @@
 # WSL/Linux 的 Bash 脚本在 Windows 检出时也必须保留 LF。
 install_dependence.sh text eol=lf
+Dockerfile text eol=lf
+compose.yaml text eol=lf
+tools/container/*.sh text eol=lf

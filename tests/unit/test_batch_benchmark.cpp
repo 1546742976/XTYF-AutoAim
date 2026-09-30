@@ -3,6 +3,7 @@
 #include "autoaim/pipeline/run_metadata.hpp"
 #include "autoaim/vision/calibration_report.hpp"
 #include "support/calibration_fixture.hpp"
+#include "support/config_fixture.hpp"
 #include "../../src/pipeline/session_annotation.hpp"
 #include "../../src/pipeline/yaml_output.hpp"
 #include "test_support.hpp"
@@ -78,15 +79,70 @@ int main(int argc, char** model_paths) {
     calibration["calibration"]["distortion"] = solution.distortion;
     calibration["calibration"]["intrinsic_report_file"] = "intrinsics.yaml";
     detail::write_yaml(directory / "calibration.yaml", calibration);
-    auto configuration = YAML::LoadFile((root / "config/offline/armor.yaml").string());
-    configuration["calibration_file"] = "calibration.yaml";
-    configuration["geometry_files"][0] = (root / "config/offline/geometry.yaml").string();
-    const auto config_path = directory / "config.yaml";
-    detail::write_yaml(config_path, configuration);
+    // 传统链对照显式固定测试副本；仓库统一入口可以选择其他检测器。
+    const auto traditional_fixture = [&](const std::filesystem::path& destination) {
+      auto copied = test::copy_config_fixture(root / "config/offline/armor.yaml", destination);
+      auto fast = YAML::LoadFile(copied.fast_choose.string());
+      fast["active_detector"] = "traditional";
+      detail::write_yaml(copied.fast_choose, fast);
+      copied.entry = copied.fast_choose;
+      return copied;
+    };
+    const auto fixture = traditional_fixture(directory / "configuration");
+    auto configuration = YAML::LoadFile(fixture.base.string());
+    configuration["calibration_file"] = (directory / "calibration.yaml").string();
+    detail::write_yaml(fixture.base, configuration);
+    const auto config_path = fixture.entry;
     const auto loaded = pipeline::load_pipeline_config(config_path);
     CHECK(loaded);
     const auto original = pipeline::describe_run(config_path, loaded.value());
-    CHECK(original["run_metadata_schema_version"].as<int>() == 2);
+    CHECK(original["run_metadata_schema_version"].as<int>() == 3);
+    CHECK(original["configuration_file"]["path"].as<std::string>() == fixture.entry.string());
+    CHECK(original["base_configuration_file"]["path"].as<std::string>() == fixture.base.string());
+    CHECK(original["fast_choose_file"]["path"].as<std::string>() == fixture.fast_choose.string());
+    CHECK(original["configuration"]["fast_choose_version"].as<int>() == 1);
+    CHECK(original["base_configuration"]["detector"]["kind"].as<std::string>() == "traditional");
+    CHECK(original["estimator"]["kind"].as<std::string>() == estimation::estimator_name);
+    CHECK(original["estimator"]["eso_parameters_effective"].as<bool>() == estimation::eso_enabled);
+    CHECK(original["estimator"]["eso_parameters"]["translation_bandwidth_radps"].as<double>() ==
+          loaded.value().tracker.eso.translation_bandwidth_radps);
+    CHECK(original["estimator"]["eso_parameters"]["angular_bandwidth_radps"].as<double>() ==
+          loaded.value().tracker.eso.angular_bandwidth_radps);
+    CHECK(original["estimator"]["eso_parameters"]["linear_jerk_psd"].as<double>() ==
+          loaded.value().tracker.eso.linear_jerk_psd);
+
+    // 快调来源使用装载时的原始字节快照；运行中改变文件不会改变旧实例的记录和有效值。
+    const auto original_fast_hash = original["fast_choose_file"]["fnv1a64"].as<std::string>();
+    const auto original_effective = YAML::Dump(original["effective_configuration"]);
+    const auto original_age = loaded.value().queue.maximum_age.value();
+    detail::write_bytes(fixture.fast_choose,
+                        detail::read_bytes(fixture.fast_choose) + "\n# fast choose comment only\n");
+    const auto same_loaded = pipeline::describe_run(config_path, loaded.value());
+    CHECK(same_loaded["fast_choose_file"]["fnv1a64"].as<std::string>() == original_fast_hash);
+    CHECK(YAML::Dump(same_loaded["configuration_file"]) == YAML::Dump(original["configuration_file"]));
+    CHECK(YAML::Dump(same_loaded["fast_choose_configuration"]) ==
+          YAML::Dump(original["fast_choose_configuration"]));
+    CHECK(YAML::Dump(same_loaded["effective_configuration"]) == original_effective);
+    const auto comment_reload = pipeline::load_pipeline_config(config_path);
+    CHECK(comment_reload);
+    const auto comment_run = pipeline::describe_run(config_path, comment_reload.value());
+    CHECK(comment_run["fast_choose_file"]["fnv1a64"].as<std::string>() != original_fast_hash);
+    CHECK(YAML::Dump(comment_run["effective_configuration"]) == original_effective);
+    CHECK(comment_reload.value().queue.maximum_age.value() == original_age);
+
+    auto tuning = YAML::LoadFile(fixture.fast_choose.string());
+    tuning["common"]["queue"]["maximum_age_s"] = original_age / 2;
+    detail::write_yaml(fixture.fast_choose, tuning);
+    const auto tuning_reload = pipeline::load_pipeline_config(config_path);
+    CHECK(tuning_reload);
+    CHECK(tuning_reload.value().queue.maximum_age.value() == original_age / 2);
+    const auto tuned_run = pipeline::describe_run(config_path, tuning_reload.value());
+    CHECK(tuned_run["effective_configuration"]["queue"]["maximum_age_s"].as<double>() ==
+          original_age / 2);
+    CHECK(loaded.value().queue.maximum_age.value() == original_age);
+    const auto original_after_tuning = pipeline::describe_run(config_path, loaded.value());
+    CHECK(original_after_tuning["fast_choose_file"]["fnv1a64"].as<std::string>() == original_fast_hash);
+    CHECK(YAML::Dump(original_after_tuning["effective_configuration"]) == original_effective);
     CHECK(original["calibration_reports"]["intrinsics"]["evidence_level"].as<std::string>() ==
           "simulation");
     CHECK(original["calibration_reports"]["extrinsics"]["file"].IsNull());
@@ -136,18 +192,15 @@ int main(int argc, char** model_paths) {
     if (argc == 3) {
       for (int model = 0; model < 2; ++model) {
         const auto name = model == 0 ? "yolov5.yaml" : "yolo11.yaml";
-        auto config = YAML::LoadFile((root / "config/offline" / name).string());
-        config["detector"]["model_path"] = std::string(model_paths[model + 1]);
-        config["calibration_file"] = (root / "config/offline/calibration.yaml").string();
-        config["geometry_files"][0] = (root / "config/offline/geometry.yaml").string();
-        const auto path = directory / name;
-        {
-          std::ofstream output(path);
-          output << config;
-          CHECK(output.good());
-        }
+        const auto kind = model == 0 ? "yolov5" : "yolo11";
+        const auto model_fixture = test::copy_config_fixture(root / "config/offline" / name,
+                                                             directory / kind);
+        auto model_tuning = YAML::LoadFile(model_fixture.fast_choose.string());
+        model_tuning["detectors"][kind]["model_path"] =
+            std::filesystem::absolute(model_paths[model + 1]).string();
+        detail::write_yaml(model_fixture.fast_choose, model_tuning);
         arguments.push_back("--config");
-        arguments.push_back(path.string());
+        arguments.push_back(model_fixture.base.string());
       }
     }
     std::vector<char*> argv;
@@ -164,6 +217,22 @@ int main(int argc, char** model_paths) {
     }
     CHECK(report["runs"][0]["configuration_file"]["fnv1a64"].as<std::string>().size() == 16);
     CHECK(report["runs"][0]["calibration_parameters"]["width"].as<int>() == 640);
+    CHECK(report["runs"][0]["run_metadata_schema_version"].as<int>() == 3);
+    CHECK(report["runs"][0]["estimator"]["kind"].as<std::string>() == estimation::estimator_name);
+    CHECK(report["runs"][0]["estimator"]["eso_parameters_effective"].as<bool>() ==
+          estimation::eso_enabled);
+    const auto dataset = std::filesystem::absolute(directory / "input/events.yaml")
+                             .lexically_normal().string();
+    CHECK(report["runs"][0]["effective_configuration"]["input_manifest"].as<std::string>() == dataset);
+    CHECK(report["runs"][0]["input_manifest"].as<std::string>() == dataset);
+    const auto ordinary_fixture = traditional_fixture(directory / "ordinary-configuration");
+    auto ordinary = pipeline::load_pipeline_config(ordinary_fixture.entry);
+    CHECK(ordinary);
+    CHECK(ordinary.value().input_manifest != std::filesystem::path(dataset));
+    ordinary.value().input_manifest = dataset;
+    const auto ordinary_run = pipeline::describe_run(ordinary_fixture.entry, ordinary.value());
+    CHECK(YAML::Dump(ordinary_run["effective_configuration"]) ==
+          YAML::Dump(report["runs"][0]["effective_configuration"]));
     CHECK(YAML::Dump(report["runs"][0]) == YAML::Dump(report["runs"][1]));
     CHECK(report["runs"][0]["command_writes"].as<std::uint64_t>() > 0);
     CHECK(report["runs"][0]["command_format"].as<std::string>() == "uart14-recording");
@@ -291,20 +360,17 @@ int main(int argc, char** model_paths) {
           (input / "events.yaml").string(), "--iou", "0.5", "--output",
           (directory / (tag + "-comparison")).string()};
       for (int variant = 0; variant < 2; ++variant) {
-        auto config = YAML::LoadFile((root / "config/offline/armor.yaml").string());
-        config["calibration_file"] = (root / "config/offline/calibration.yaml").string();
-        config["geometry_files"][0] = (root / "config/offline/geometry.yaml").string();
+        const auto age_fixture = test::copy_config_fixture(root / "config/offline/armor.yaml",
+            directory / (tag + std::to_string(variant) + "-configuration"));
+        auto config = YAML::LoadFile(age_fixture.base.string());
         config["operator_input"]["kind"] = button ? "button" : "legacy_enable_event";
-        config["safety"]["operator_age_s"] = variant ? 0.001 : 0.1;
-        config["queue"]["maximum_age_s"] = variant ? 0.001 : 0.1;
-        const auto path = directory / (tag + std::to_string(variant) + ".yaml");
-        {
-          std::ofstream output(path);
-          output << config;
-          CHECK(output.good());
-        }
+        detail::write_yaml(age_fixture.base, config);
+        auto age_tuning = YAML::LoadFile(age_fixture.fast_choose.string());
+        age_tuning["common"]["safety"]["operator_age_s"] = variant ? 0.001 : 0.1;
+        age_tuning["common"]["queue"]["maximum_age_s"] = variant ? 0.001 : 0.1;
+        detail::write_yaml(age_fixture.fast_choose, age_tuning);
         compare.push_back("--config");
-        compare.push_back(path.string());
+        compare.push_back(age_fixture.base.string());
       }
       std::vector<char*> values;
       for (auto& value : compare)

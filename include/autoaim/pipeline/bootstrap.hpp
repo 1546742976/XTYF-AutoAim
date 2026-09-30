@@ -14,7 +14,20 @@
 #include <map>
 
 namespace autoaim::pipeline {
-// 全部参数由 bootstrap 显式装配；测试参数只在 config/offline 中提供。
+struct ConfigurationFileSnapshot {
+  std::filesystem::path path;
+  std::string contents;
+};
+
+struct PipelineConfigurationSnapshot {
+  ConfigurationFileSnapshot entry;
+  ConfigurationFileSnapshot base;
+  std::optional<ConfigurationFileSnapshot> fast_choose;
+  YAML::Node effective;
+};
+
+// bootstrap 合成 config/fast_choose.yaml 的日常参数与基础场景契约，再显式装配。
+// 基础配置保留标定、几何、类别和角点声明；旧完整配置仍可直接装载。
 struct PipelineConfig {
   std::filesystem::path input_manifest;
   core::Role role;
@@ -56,6 +69,7 @@ struct PipelineConfig {
   std::optional<UartFeedbackOptions> uart_feedback{};
   bool independent_button_input = false; // 缺少新配置时保持旧 enable_event 语义。
   core::Evidence button_evidence = core::Evidence::declared();
+  std::shared_ptr<const PipelineConfigurationSnapshot> configuration_snapshot{};
 };
 
 // 缺少显式尺寸返回空；legacy 配置只按其旧模型编号查表，不推断板型。
@@ -64,4 +78,7 @@ const vision::PlateDimensions* plate_dimensions(const PipelineConfig& config,
 
 // 只读文件，不创建线程、检测器推理请求或设备会话；首版入口只接受 replay。
 core::Result<PipelineConfig> load_pipeline_config(const std::filesystem::path& path);
+// 一次预加载共用同一快调文件的字节快照；缓存仅属于本次调用。
+core::Result<std::vector<PipelineConfig>>
+load_pipeline_configs(const std::vector<std::filesystem::path>& paths);
 } // namespace autoaim::pipeline

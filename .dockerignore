@@ -1,0 +1,34 @@
+# Allow only the source, fixtures and packaging inputs needed by these targets.
+# Local models, recordings, SDKs, credentials and old builds never enter the context.
+**
+!Dockerfile
+!.dockerignore
+!CMakeLists.txt
+!install_dependence.sh
+!include/
+!include/**
+!src/
+!src/**
+!apps/
+!apps/**
+!tools/
+!tools/**
+!tests/
+!tests/**
+!config/
+!config/fast_choose.yaml
+!config/offline/
+!config/offline/armor.yaml
+!config/offline/calibration.yaml
+!config/offline/geometry.yaml
+!config/offline/corners.yaml
+!config/offline/calibration-dataset.yaml
+!config/offline/yolov5.yaml
+!config/offline/yolo11.yaml
+!config/hardware/
+!config/hardware/disabled.yaml
+!config/hardware/camera.yaml
+!config/hardware/uart-mapping.yaml
+**/__pycache__/**
+**/*.pyc
+**/CMakeCache.txt

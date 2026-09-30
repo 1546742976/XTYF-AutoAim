@@ -19,6 +19,7 @@ struct TrackerOptions {
   double association_margin;
   double initial_alpha_variance;
   std::string calibration_id;
+  EsoOptions eso{};
 };
 
 using ObservationBatch = std::vector<std::shared_ptr<const Observation>>;

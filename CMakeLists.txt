@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(XTYF_AutoAim VERSION 1.1.0 LANGUAGES CXX)
+project(XTYF_AutoAim VERSION 1.2.0 LANGUAGES CXX)
 
 # 保留已验证的默认版本；允许配置时使用 -DCMAKE_CXX_STANDARD=20。
 set(CMAKE_CXX_STANDARD 17 CACHE STRING "C++ language standard (17 by default, 20 allowed)")
@@ -8,11 +8,28 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 include(CTest)
 
+# 快速替换：全部算法选择集中在此；ON 启用候选，OFF 回退原实现。
+# 也可配置时传 -D<选项>=ON/OFF；更改后须重新构建，不修改 cpp/hpp。
+# 各候选分别验收；组合与目标 NUC 性能另验。详见 additional_information.md。
+option(AUTOAIM_I1_CONTRAST_IRLS "I1: contrast-weighted Huber IRLS corner centerlines" OFF)
+option(AUTOAIM_I2_LM "I2: refine both IPPE seeds with corner reprojection LM" OFF)
+option(AUTOAIM_I3_LINEAR_CA "I3: EKF translation CA with experimental jerk PSD 1.0" OFF)
+option(AUTOAIM_I9_THROUGHPUT "I9: OpenVINO THROUGHPUT instead of LATENCY" OFF)
+option(AUTOAIM_I9_PREALLOC "I9: preallocated vector for pending frames" OFF)
+option(AUTOAIM_USE_ESO "Use experimental ESO instead of EKF" OFF)
+if(AUTOAIM_I3_LINEAR_CA AND AUTOAIM_USE_ESO)
+  message(FATAL_ERROR "I3-LINEAR-CA is an EKF comparison; select it separately from ESO")
+endif()
+
 find_package(Threads REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 find_package(OpenCV 4 REQUIRED COMPONENTS core calib3d imgproc imgcodecs)
 option(AUTOAIM_OPENVINO "Build the OpenVINO YOLOv5/YOLO11 backends" ON)
+
+if(AUTOAIM_I9_THROUGHPUT AND NOT AUTOAIM_OPENVINO)
+  message(FATAL_ERROR "AUTOAIM_I9_THROUGHPUT requires AUTOAIM_OPENVINO=ON")
+endif()
 
 if(AUTOAIM_OPENVINO)
   find_package(OpenVINO REQUIRED COMPONENTS Runtime)
@@ -177,6 +194,17 @@ autoaim_module(pipeline
   src/pipeline/uart_adapter.cpp
   src/pipeline/uart_writer.cpp)
 
+# 选择值由同一构建传入；公共估计器别名对所有使用者保持一致。
+target_compile_definitions(autoaim_vision PRIVATE
+  AUTOAIM_I1_CONTRAST_IRLS=$<BOOL:${AUTOAIM_I1_CONTRAST_IRLS}>
+  AUTOAIM_I2_LM=$<BOOL:${AUTOAIM_I2_LM}>
+  AUTOAIM_I9_THROUGHPUT=$<BOOL:${AUTOAIM_I9_THROUGHPUT}>)
+target_compile_definitions(autoaim_pipeline PRIVATE
+  AUTOAIM_I3_LINEAR_CA=$<BOOL:${AUTOAIM_I3_LINEAR_CA}>
+  AUTOAIM_I9_PREALLOC=$<BOOL:${AUTOAIM_I9_PREALLOC}>)
+target_compile_definitions(autoaim_estimation PUBLIC
+  AUTOAIM_USE_ESO=$<BOOL:${AUTOAIM_USE_ESO}>)
+
 # 报告来源只记录内容和构建参数，不包含配置时间。源码改变会触发重新配置。
 file(GLOB_RECURSE autoaim_provenance_sources CONFIGURE_DEPENDS
   RELATIVE "${PROJECT_SOURCE_DIR}" "src/*.cpp" "src/*.hpp" "include/*.hpp"
@@ -216,6 +244,9 @@ autoaim_build_field(openvino "${AUTOAIM_OPENVINO}")
 autoaim_build_field(hikrobot "${AUTOAIM_HIKROBOT}")
 autoaim_build_field(sanitizers "${AUTOAIM_SANITIZERS}")
 autoaim_build_field(thread_sanitizer "${AUTOAIM_THREAD_SANITIZER}")
+foreach(choice I1_CONTRAST_IRLS I2_LM I3_LINEAR_CA I9_THROUGHPUT I9_PREALLOC USE_ESO)
+  autoaim_build_field(AUTOAIM_${choice} "${AUTOAIM_${choice}}")
+endforeach()
 autoaim_build_field(opencv_version "${OpenCV_VERSION}")
 autoaim_build_field(eigen_version "${Eigen3_VERSION}")
 if(DEFINED yaml-cpp_VERSION)
@@ -255,6 +286,25 @@ target_link_libraries(replay_visualizer PRIVATE autoaim_pipeline)
 add_executable(pipeline_metrics tools/pipeline_metrics/main.cpp)
 target_link_libraries(pipeline_metrics PRIVATE autoaim_options)
 
+# 安装只面向现有离线入口；不导出模块库、测试或打符预留目标。
+include(GNUInstallDirs)
+install(TARGETS autoaim_node offline_replay autoaim_infantry autoaim_sentry
+  calibration_tool bench_detector annotate_session synthetic_sim protocol_tester
+  replay_visualizer pipeline_metrics
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime)
+install(FILES config/fast_choose.yaml
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/autoaim/config COMPONENT Runtime)
+install(FILES
+  config/offline/armor.yaml config/offline/calibration.yaml config/offline/geometry.yaml
+  config/offline/corners.yaml config/offline/calibration-dataset.yaml
+  config/offline/yolov5.yaml config/offline/yolo11.yaml
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/autoaim/config/offline COMPONENT Runtime)
+install(FILES config/hardware/disabled.yaml config/hardware/camera.yaml
+  config/hardware/uart-mapping.yaml
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/autoaim/config/hardware COMPONENT Runtime)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/generated/autoaim_build_information.json"
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/autoaim COMPONENT Runtime)
+
 # CTest 注册及依赖边界检查器；BUILD_TESTING=OFF 时不生成检查脚本。
 function(autoaim_test_target name source)
   add_executable(${name} ${source})
@@ -270,6 +320,32 @@ endfunction()
 
 if(BUILD_TESTING)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
+  add_test(NAME test_alternative_verifier COMMAND ${Python3_EXECUTABLE}
+    ${PROJECT_SOURCE_DIR}/tests/verify_alternatives.py --self-test)
+  if(AUTOAIM_I1_CONTRAST_IRLS)
+    autoaim_test(test_corner_refine_irls tests/unit/test_corner_refine_irls.cpp autoaim_vision)
+    target_sources(test_corner_refine_irls PRIVATE tests/support/corner_refine_baseline.cpp)
+  endif()
+  if(AUTOAIM_I2_LM)
+    autoaim_test(test_pnp_lm tests/unit/test_pnp_lm.cpp autoaim_vision)
+    target_sources(test_pnp_lm PRIVATE tests/support/pnp_baseline.cpp)
+  endif()
+  if(AUTOAIM_I3_LINEAR_CA AND NOT AUTOAIM_USE_ESO)
+    autoaim_test(test_linear_ca tests/unit/test_linear_ca.cpp autoaim_pipeline)
+  endif()
+  if(AUTOAIM_I9_PREALLOC)
+    autoaim_test(test_queue_prealloc tests/contract/test_queue_prealloc.cpp autoaim_pipeline)
+    target_sources(test_queue_prealloc PRIVATE tests/support/queue_prealloc_baseline.cpp)
+  endif()
+  if(AUTOAIM_USE_ESO)
+    autoaim_test(test_eso tests/unit/test_eso.cpp autoaim_decision)
+  endif()
+
+  add_test(NAME test_install_layout COMMAND ${Python3_EXECUTABLE}
+    ${PROJECT_SOURCE_DIR}/tests/test_install_layout.py
+    --cmake ${CMAKE_COMMAND} --build ${CMAKE_CURRENT_BINARY_DIR} --config $<CONFIG>)
+  set_tests_properties(test_install_layout PROPERTIES TIMEOUT 120)
 
   # Python 检查器源码在此统一维护；仅生成到构建目录，不在源码树重建 cmake/。
   # bracket 参数保留 Python 正则/转义原文，file(GENERATE) 在配置生成阶段写出。

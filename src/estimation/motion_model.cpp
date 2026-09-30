@@ -6,6 +6,7 @@
 namespace autoaim::estimation {
 bool state_valid(const TargetState& state) noexcept {
   return state.center.metres().allFinite() && state.velocity_mps.allFinite() &&
+         state.acceleration_mps2.allFinite() &&
          std::isfinite(state.phase.value()) && std::isfinite(state.omega_radps) &&
          std::isfinite(state.alpha_radps2);
 }
@@ -23,6 +24,8 @@ StateVector state_difference(const TargetState& actual, const TargetState& refer
 
   result[component_index(StateComponent::omega)] = actual.omega_radps - reference.omega_radps;
   result[component_index(StateComponent::alpha)] = actual.alpha_radps2 - reference.alpha_radps2;
+  result.segment<3>(component_index(StateComponent::ax)) =
+      actual.acceleration_mps2 - reference.acceleration_mps2;
 
   return result;
 }
@@ -37,7 +40,8 @@ TargetState add_state_delta(const TargetState& state, const StateVector& delta) 
           math::wrap_to_pi(
               core::Radians(state.phase.value() + delta[component_index(StateComponent::phase)])),
           state.omega_radps + delta[component_index(StateComponent::omega)],
-          state.alpha_radps2 + delta[component_index(StateComponent::alpha)]};
+          state.alpha_radps2 + delta[component_index(StateComponent::alpha)],
+          state.acceleration_mps2 + delta.segment<3>(component_index(StateComponent::ax))};
 }
 
 MotionModel::MotionModel(double translation_noise, double angular_noise, core::Seconds max_horizon)
@@ -58,11 +62,23 @@ MotionModel::MotionModel(double translation_noise, double jerk_noise, core::Seco
   alpha_limit_ = alpha_limit;
 }
 
+MotionModel MotionModel::with_linear_acceleration(double linear_jerk_psd) const {
+  if (!std::isfinite(linear_jerk_psd) || linear_jerk_psd < 0)
+    throw std::invalid_argument("Invalid linear jerk noise");
+
+  auto result = *this;
+  result.linear_acceleration_ = true;
+  result.linear_jerk_ = linear_jerk_psd;
+  return result;
+}
+
 TargetState MotionModel::constrain(const TargetState& state) const {
   if (!state_valid(state))
     throw std::invalid_argument("Non-finite motion state");
 
   auto result = state;
+  if (!linear_acceleration_)
+    result.acceleration_mps2.setZero();
   result.phase = math::wrap_to_pi(state.phase);
   result.alpha_radps2 = kind_ == MotionKind::constant_velocity
                             ? 0
@@ -74,24 +90,37 @@ TargetState MotionModel::constrain(const TargetState& state) const {
 core::Result<StatePrediction> MotionModel::remap_from(const MotionModel& previous,
                                                       const TargetState& state,
                                                       const StateCovariance& covariance,
-                                                      double initial_alpha_variance) const {
+                                                      double initial_alpha_variance,
+                                                      double initial_linear_acceleration_variance) const {
   using Result = core::Result<StatePrediction>;
 
   if (!state_valid(state) || !math::covariance_valid(covariance) ||
-      !std::isfinite(initial_alpha_variance) || initial_alpha_variance <= 0)
+      !std::isfinite(initial_alpha_variance) || initial_alpha_variance <= 0 ||
+      !std::isfinite(initial_linear_acceleration_variance) ||
+      initial_linear_acceleration_variance <= 0)
     return Result::failure(core::ErrorCode::invalid_input, "Invalid motion model mapping");
 
   auto mapped = constrain(state);
   StateCovariance transform = StateCovariance::Identity(), result = covariance;
   constexpr int alpha = component_index(StateComponent::alpha);
+  constexpr int acceleration = component_index(StateComponent::ax);
+
+  if (previous.linear_acceleration_ != linear_acceleration_ || !linear_acceleration_)
+    transform.middleRows<3>(acceleration).setZero();
 
   if (previous.kind_ != kind_ || kind_ == MotionKind::constant_velocity) {
     transform.row(alpha).setZero();
-    result = transform * covariance * transform.transpose();
     mapped.alpha_radps2 = 0;
+  }
 
-    if (kind_ == MotionKind::bounded_acceleration)
-      result(alpha, alpha) = initial_alpha_variance;
+  result = transform * covariance * transform.transpose();
+  if (previous.kind_ != kind_ && kind_ == MotionKind::bounded_acceleration)
+    result(alpha, alpha) = initial_alpha_variance;
+  if (previous.linear_acceleration_ != linear_acceleration_) {
+    mapped.acceleration_mps2.setZero();
+    if (linear_acceleration_)
+      result.block<3, 3>(acceleration, acceleration).diagonal().setConstant(
+          initial_linear_acceleration_variance);
   }
 
   return Result::success({std::move(mapped), std::move(result), std::move(transform)});
@@ -113,19 +142,40 @@ core::Result<StatePrediction> MotionModel::propagate(const TargetState& state,
                 omega = component_index(StateComponent::omega);
 
   constexpr int alpha = component_index(StateComponent::alpha);
+  constexpr int acceleration = component_index(StateComponent::ax);
 
   if (kind_ == MotionKind::constant_velocity) {
     transition.row(alpha).setZero();
     transition.col(alpha).setZero();
   }
 
+  if (!linear_acceleration_) {
+    transition.middleRows<3>(acceleration).setZero();
+    transition.middleCols<3>(acceleration).setZero();
+  }
+
+  // 连续白 jerk 的精确离散噪声，按 [位置, 速度, 加速度] 排列。
+  Eigen::Matrix3d jerk;
+  jerk << std::pow(dt, 5) / 20, std::pow(dt, 4) / 8, dt * dt * dt / 6,
+      std::pow(dt, 4) / 8, dt * dt * dt / 3, dt * dt / 2,
+      dt * dt * dt / 6, dt * dt / 2, dt;
+
   for (int axis = 0; axis < 3; ++axis) {
     const int position = component_index(StateComponent::x) + axis;
     const int velocity = component_index(StateComponent::vx) + axis;
     transition(position, velocity) = dt;
-    noise(position, position) = translation_noise_ * dt * dt * dt / 3;
-    noise(position, velocity) = noise(velocity, position) = translation_noise_ * dt * dt / 2;
-    noise(velocity, velocity) = translation_noise_ * dt;
+    if (linear_acceleration_) {
+      const int indices[] = {position, velocity, acceleration + axis};
+      transition(position, acceleration + axis) = dt * dt / 2;
+      transition(velocity, acceleration + axis) = dt;
+      for (int row = 0; row < 3; ++row)
+        for (int col = 0; col < 3; ++col)
+          noise(indices[row], indices[col]) = linear_jerk_ * jerk(row, col);
+    } else {
+      noise(position, position) = translation_noise_ * dt * dt * dt / 3;
+      noise(position, velocity) = noise(velocity, position) = translation_noise_ * dt * dt / 2;
+      noise(velocity, velocity) = translation_noise_ * dt;
+    }
   }
 
   transition(phase, omega) = dt;
@@ -139,15 +189,13 @@ core::Result<StatePrediction> MotionModel::propagate(const TargetState& state,
     transition(omega, alpha) = dt;
 
     // 连续白 jerk 的精确离散协方差，长跨度自然增加相位不确定度。
-    Eigen::Matrix3d block;
-    block << std::pow(dt, 5) / 20, std::pow(dt, 4) / 8, std::pow(dt, 3) / 6, std::pow(dt, 4) / 8,
-        std::pow(dt, 3) / 3, dt * dt / 2, std::pow(dt, 3) / 6, dt * dt / 2, dt;
-
-    noise.block<3, 3>(phase, phase) = angular_noise_ * block;
+    noise.block<3, 3>(phase, phase) = angular_noise_ * jerk;
   }
 
   const auto bounded = constrain(state);
-  const Eigen::Vector3d center = state.center.metres() + state.velocity_mps * dt;
+  const Eigen::Vector3d center = bounded.center.metres() + bounded.velocity_mps * dt +
+                                 bounded.acceleration_mps2 * (dt * dt / 2);
+  const Eigen::Vector3d velocity = bounded.velocity_mps + bounded.acceleration_mps2 * dt;
   const double angle =
       bounded.phase.value() + bounded.omega_radps * dt + bounded.alpha_radps2 * dt * dt / 2;
 
@@ -156,8 +204,9 @@ core::Result<StatePrediction> MotionModel::propagate(const TargetState& state,
   if (!center.allFinite() || !std::isfinite(angle) || !std::isfinite(speed))
     return Result::failure(core::ErrorCode::invalid_input, "Motion extrapolation overflow");
 
-  TargetState predicted{math::Point3<math::WorldFrame>(center), state.velocity_mps,
-                        math::wrap_to_pi(core::Radians(angle)), speed, bounded.alpha_radps2};
+  TargetState predicted{math::Point3<math::WorldFrame>(center), velocity,
+                         math::wrap_to_pi(core::Radians(angle)), speed, bounded.alpha_radps2,
+                         bounded.acceleration_mps2};
 
   StateCovariance uncertainty = transition * covariance * transition.transpose() + noise;
   uncertainty = ((uncertainty + uncertainty.transpose()) / 2).eval();

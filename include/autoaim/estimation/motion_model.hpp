@@ -9,7 +9,7 @@ namespace autoaim::estimation {
 enum class MotionKind { constant_velocity, bounded_acceleration };
 
 // 下标只在估计器内部打包/线性代数边界使用，下游读取具名状态。
-enum class StateComponent : int { x, y, z, vx, vy, vz, phase, omega, alpha, count };
+enum class StateComponent : int { x, y, z, vx, vy, vz, phase, omega, alpha, ax, ay, az, count };
 inline constexpr int state_dimension = static_cast<int>(StateComponent::count);
 using StateCovariance = Eigen::Matrix<double, state_dimension, state_dimension>;
 using StateVector = Eigen::Matrix<double, state_dimension, 1>;
@@ -24,6 +24,7 @@ struct TargetState {
   core::Radians phase;
   double omega_radps;
   double alpha_radps2;
+  Eigen::Vector3d acceleration_mps2 = Eigen::Vector3d::Zero();
 };
 
 bool state_valid(const TargetState& state) noexcept;
@@ -52,6 +53,12 @@ public:
     return kind_;
   }
 
+  // 独立于角 CV/CA：复制原角运动约束与时域，仅启用平移 CA（白 jerk，m²/s⁵）。
+  MotionModel with_linear_acceleration(double linear_jerk_psd) const;
+  bool linear_acceleration_enabled() const noexcept {
+    return linear_acceleration_;
+  }
+
   core::Result<StatePrediction>
   propagate(const TargetState& state, const StateCovariance& covariance, core::Seconds dt) const;
 
@@ -59,7 +66,8 @@ public:
   // 新激活 alpha=0、交叉协方差=0，方差由调用者明确提供；不是统一膨胀 P。
   core::Result<StatePrediction> remap_from(const MotionModel& previous, const TargetState& state,
                                            const StateCovariance& covariance,
-                                           double initial_alpha_variance) const;
+                                           double initial_alpha_variance,
+                                           double initial_linear_acceleration_variance = 1) const;
 
   TargetState constrain(const TargetState& state) const;
 
@@ -69,5 +77,7 @@ private:
   double angular_noise_;
   core::Seconds max_horizon_;
   double alpha_limit_ = 0;
+  bool linear_acceleration_ = false;
+  double linear_jerk_ = 0;
 };
 } // namespace autoaim::estimation

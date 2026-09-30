@@ -45,7 +45,8 @@ struct TargetSnapshot {
         visible_dimensions(dimensions), time_origin(origin), timing_uncertainty(time_sigma),
         timing_evidence(std::move(time_evidence)) {
     if (!motion || !geometry || id == 0 || core::elapsed(time, stamp.exposure).value() < 0 ||
-        !state.velocity_mps.allFinite() || !std::isfinite(state.omega_radps) ||
+        !state.velocity_mps.allFinite() || !state.acceleration_mps2.allFinite() ||
+        !std::isfinite(state.omega_radps) ||
         !std::isfinite(state.alpha_radps2) || !math::covariance_valid(covariance))
       throw std::invalid_argument("Invalid target snapshot");
 

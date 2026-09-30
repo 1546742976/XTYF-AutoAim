@@ -1,6 +1,6 @@
 #pragma once
 
-#include "autoaim/estimation/ekf.hpp"
+#include "autoaim/estimation/motion_model.hpp"
 #include <array>
 
 namespace autoaim::estimation {

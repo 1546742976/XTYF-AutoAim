@@ -53,7 +53,8 @@ MeasurementModel::linearize(const TargetState& state, const GeometryProfile& geo
   constexpr double step = 1e-5;
 
   // 对流形残差直接线性化，包含非零创新处的 log 映射导数；EKF 不知道几何细节。
-  for (int k = 0; k < state_dimension; ++k) {
+  // 新增平移加速度不影响当前板位姿，其三列解析为零；保留原九列的线性化口径。
+  for (int k = 0; k < component_index(StateComponent::ax); ++k) {
     StateVector delta = StateVector::Zero();
     delta[k] = step;
     const auto plus = predict(add_state_delta(state, delta), geometry, physical_plate).value();

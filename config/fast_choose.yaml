@@ -1,0 +1,197 @@
+# 日常调参统一入口；保持原三份离线配置的默认数值，不代表设备标定。
+# --config config/fast_choose.yaml 使用 active_detector；直接指定 offline/*.yaml 时固定其检测器。
+# 路径相对此文件所在目录 config/；标定、几何、类别/角点契约仍在各基础配置中。
+# 数值均须有限；下列范围来自当前加载器和算法校验。未写上限表示代码未设固定上限。
+# 改值后重新启动/重新加载生效，不提供运行中热更新；数组按整项替换，不按下标合并。
+fast_choose_version: 1 # 文件格式版本，无单位；当前只支持 1，用于识别快调入口。
+active_detector: yolov5 # traditional/yolov5/yolo11；默认 YOLOv5，仅本文件作为入口时选择检测链。
+
+common:
+  # 回放与发布：适用于三种检测器；CLI --input 仍可覆盖 input_manifest。
+  input_manifest: ../out/synthetic/events.yaml # 回放清单路径；须可读取；更换后使用另一组输入事件。
+  program_fire_requested: false # bool；程序开火请求；true 仍须通过既有模式、证据和时效门控。
+  publish_period_s: 0.01 # s，[0.000001,60]；发布周期，减小提高发送频率与调度开销。
+  intent_lifetime_s: 0.05 # s，>0；指令请求有效期，增大延长其上限，仍受原曝光控制年龄约束。
+  after_send_delay_s: 0.01 # s，>=0；预计发送后至发射的延迟，增大使拦截解预测更远时刻。
+  operator_input:
+    button_mode: toggle # toggle/hold；仅独立 button 输入使用，分别为按下切换/按住自动。
+  detector:
+    enemy: red # red/blue；三种检测器共用；选择需要保留的目标颜色。
+
+  # 角点精修：三种检测器共用；仅 enabled=true 时执行精修。
+  refinement:
+    enabled: true # bool；开启局部灯条精修，关闭时使用映射后的原角点。
+    brightness: 100 # 像素通道值，整数[0,255]；增大提高亮度要求，保留的拟合像素更少。
+    color_difference: 50 # 像素通道差，整数[0,255]；增大提高敌我色通道反差要求。
+    search_radius_px: 3 # px，>0；灯条周围搜索半径，增大扩大精修区域与计算量。
+    maximum_shift_px: 4 # px，>0；允许的角点位移上限，减小更容易拒绝大幅精修。
+    minimum_pixels: 6 # 像素数，整数>=3；拟合所需支持像素，增大要求更多有效像素。
+
+  # 帧队列与姿态历史：三种检测器共用；容量与时效共同影响内存、丢帧和可用历史。
+  queue:
+    pool_capacity: 6 # 图像块数，整数>=1且总字节数不可溢出；增大增加可同时持有的图像与内存。
+    pending_capacity: 2 # 帧数，整数>=1；等待队列上限，增大允许更多待处理帧。
+    in_flight_limit: 2 # 帧数，整数>=1；在途任务上限，增大允许更多并发处理/推理。
+    maximum_age_s: 0.1 # s，>0；输入/结果时效上限，增大允许较旧帧进入或完成处理。
+  history:
+    capacity: 64 # 姿态样本数，整数>=2；增大保存更长历史并增加内存。
+    maximum_gap_s: 0.05 # s，>0；姿态插值两样本的最大间隔，增大允许更稀疏的反馈。
+
+  # PnP 质量与噪声：三种检测器共用；不在这里修改真实板尺寸和角点物理顺序。
+  pnp:
+    maximum_rms_px: 3 # px，>0；重投影 RMS 上限，增大允许更大的整体像素误差。
+    maximum_corner_error_px: 5 # px，>0；单角点重投影误差上限，增大放宽最差角点要求。
+    minimum_edge_px: 3 # px，>0；最小四边形边长，增大排除更小的图像目标。
+    minimum_view_cosine: 0.02 # 无量纲，(0,1]；可靠位姿的视角余弦下限，增大使更斜的板面降为不可靠。
+    ambiguity_rms_gap_px: 0.1 # px，>0；候选误差接近的歧义门限，增大使更多近似解被视为歧义。
+    pixel_sigma_px: 1 # px，>0；角点噪声标准差，增大提高估计的位姿不确定度。
+    minimum_information_ratio: 1.0e-10 # 无量纲，(0,1)；信息矩阵最小/最大特征值比下限，增大更严格拒绝病态解。
+    prior_position_gate_m: 0.2 # m，>0；与历史位姿先验的位置距离门限，增大放宽候选匹配。
+    prior_rotation_gate_rad: 0.5 # rad，>0；与历史位姿先验的旋转差门限，增大放宽姿态匹配。
+    prior_maximum_age_s: 0.1 # s，>0；用于消歧的历史先验最大年龄，增大可使用更旧的先验。
+    # 6 项对角方差：[世界位置 x,y,z（m²），左乘旋转向量 x,y,z（rad²）]；须形成半正定协方差。
+    additional_pose_variance: [0.0001, 0.0001, 0.0001, 0.0001, 0.0001, 0.0001] # 非负；增大对应方向的附加量测不确定度。
+
+  # 运动模型与角 CV/CA 选择：三种检测器共用；ESO 平移采用下方 eso.linear_jerk_psd。
+  motion:
+    linear_accel_psd: 0.1 # m²/s³，>=0；默认 EKF 平移 CV 的白加速度谱密度，增大预测位置/速度不确定度。
+    angular_accel_psd: 0.1 # rad²/s³，>=0；角 CV 的白角加速度谱密度，增大相位/角速度预测不确定度。
+    angular_jerk_psd: 0.5 # rad²/s⁵，>=0；角 CA 的白 jerk 谱密度，增大其预测不确定度。
+    maximum_horizon_s: 1 # s，>0；单次运动外推上限，超过直接失败；增大允许更远预测。
+    maximum_alpha_radps2: 20 # rad/s²，>0；角 CA 的角加速度绝对值上限，增大允许更剧烈角运动。
+    rotation_threshold_radps: 0.1 # rad/s，>0；慢转与稳定旋转分类阈值，增大使更多低速转动归为慢转。
+    acceleration_enter_radps2: 5 # rad/s²，>acceleration_exit_radps2；进入角 CA 的阈值，增大更难触发切换。
+    acceleration_exit_radps2: 1 # rad/s²，>=0且小于进入阈值；退出角 CA 的阈值，增大更容易返回角 CV。
+    selection_observations: 3 # 次，整数>=2；模型切换所需连续支持，增大延缓切换。
+    minimum_dwell_s: 0.2 # s，>=0；角模型最短驻留时间，增大减少频繁切换。
+    maximum_gap_s: 0.1 # s，>0；计算角加速度差分的最大观测间隔，增大允许更稀疏观测。
+
+  # 每目标跟踪与身份/几何假设：三种检测器共用；NIS 使用更新前创新。
+  tracker:
+    maximum_hypotheses: 32 # 个，整数>=1；单目标有界假设数量，增大可保留更多假设并增加计算。
+    # 顺序：x,y,z,vx,vy,vz,phase,omega,alpha,ax,ay,az；各项非负。
+    # 单位依次为 m²×3、m²/s²×3、rad²、rad²/s²、rad²/s⁴、m²/s⁴×3。
+    # 也兼容旧 9 项并追加三个 1；默认平移 CV 清零失活加速度项，增大有效项提高初始不确定度。
+    initial_variance: [0.1, 0.1, 0.1, 1, 1, 1, 0.1, 1, 0.1, 1, 1, 1]
+    # 6 项，依次对应 1..6 维观测；各项>0、无量纲；增大放宽创新门控。当前默认为理论 95% 上侧门限。
+    nis_limits: [3.841458820694124, 5.991464547107979, 7.814727903251179, 9.487729036781154, 11.070497693516351, 12.591587243743977]
+    identity:
+      observations: 3 # 次，整数>=2；确认板身份的连续支持次数，增大延缓确认。
+      margin: 0.05 # 代价差，>0；最佳与次佳身份的最小差距，增大使身份确认更严格。
+      maximum_cost: 50 # 代价，>0；单观测代价上限/截断值，增大允许较差匹配参与支持。
+      previous_weight: 0.5 # 无量纲，[0,1)；历史身份分数权重，增大更平滑但响应更慢。
+    geometry:
+      observations: 3 # 次，整数>=2；确认几何模型的连续支持次数，增大延缓确认。
+      margin: 0.1 # 代价差，>0；最佳与次佳几何的最小差距，增大更难确认几何。
+      maximum_cost: 50 # 代价，>0；几何单次代价上限/截断值，增大允许较差匹配参与支持。
+      previous_weight: 0.5 # 无量纲，[0,1)；历史几何分数权重，增大更平滑但响应更慢。
+    convergence:
+      observations: 3 # 次，整数>=2；跟踪/收敛所需支持次数，增大需要更多观测。
+      duration_s: 0.04 # s，>=0；满足收敛条件的最短持续时间，增大延后收敛。
+      maximum_gap_s: 0.08 # s，>0且小于 tracker.lost_after_s；连续支持最大间隔，增大允许较稀疏观测。
+      phase_enter_rad2: 0.1 # rad²，>0；进入收敛的相位方差上限，减小要求更高相位精度。
+      phase_exit_rad2: 0.5 # rad²，>=phase_enter_rad2；保持收敛的方差上限，增大延后因不确定度退出。
+    lost_after_s: 0.3 # s，>convergence.maximum_gap_s；目标跟踪丢失时限，增大保留失联轨迹更久。
+    health:
+      maximum_rejections: 4 # 次，整数>=1；连续拒绝触发重置的次数，增大容忍更长拒绝序列。
+      position_variance_m2: 100 # m²，>0；位置最大分量方差上限，减小更早判定不健康。
+      phase_variance_rad2: 100 # rad²，>0；相位方差健康上限，减小更早要求重置。
+    geometry_dwell_s: 0.1 # s，>=0；几何模型最短驻留时间，增大减少频繁换模型。
+    geometry_complexity_penalty: 0.01 # 代价/附加几何参数，>=0；增大更偏向简单高度/转轴模型。
+    association_margin: 0.001 # NIS 代价差，>0；板与观测关联的最小优势，增大减少歧义接纳。
+    initial_alpha_variance: 0.1 # rad²/s⁴，>0；激活角 CA 时初始化角加速度方差，增大降低初始确定性。
+
+  # 多目标关联与锁定：三种检测器共用；与单目标 tracker 的生命周期参数分别生效。
+  targets:
+    maximum_count: 8 # 个，整数>=1；同时保留的目标数上限，增大增加计算与内存。
+    association_margin: 0.01 # NIS 代价差，>0；多目标匹配所需优势，增大减少歧义关联。
+    maximum_same_target_separation_m: 0.8 # m，>0；同一目标观测的空间分组上限，增大允许更分散的板。
+    maximum_source_age_s: 0.1 # s，>0；可选目标来源的最大年龄，增大放宽目标新鲜度要求。
+    lost_timeout_s: 0.3 # s，>=maximum_source_age_s；目标锁定丢失时限，增大保留原锁定更久。
+    maximum_position_variance_m2: 0.1 # m²，>0；目标选择允许的位置方差上限，减小更偏向确定的目标。
+
+  # 未来位姿与弹道：三种检测器共用；重力、坐标基准与板尺寸保留在基础契约文件。
+  prediction:
+    geometry_position_variance_m2: 0.0001 # m²，>=0；预测板位置附加几何方差，增大降低落点余量。
+    geometry_rotation_variance_rad2: 0.001 # rad²，>=0；预测板旋转附加几何方差，增大反映更大姿态误差。
+    unknown_velocity_sigma_mps: 1 # m/s，>=0；身份/姿态未可靠收敛时的未知速度标准差，增大使远期预测更不确定。
+  ballistic:
+    maximum_flight_s: 0.8 # s，>0；允许弹道飞行时长上限，增大可接受更远时域的解。
+    minimum_range_m: 0.1 # m，>0；发射点至目标的最小距离，增大排除更近目标。
+  intercept:
+    maximum_iterations: 16 # 次，整数[1,64]；联合拦截迭代上限，增大允许更多求解计算。
+    time_tolerance_s: 0.00001 # s，>0；飞行时间迭代收敛容差，减小要求更精确时间收敛。
+    position_tolerance_m: 0.0001 # m，>0；最终预测位置残差上限，减小更严格判断拦截收敛。
+  armor:
+    minimum_incidence_cosine: 0.05 # 无量纲，(0,1]；迎弹面入射余弦下限，增大排除更斜的板。
+    direction_weight: 1 # 代价/rad，>=0；瞄准方向变化的权重，增大更偏向当前方向附近的板。
+    flight_time_weight: 0.1 # 代价/s，>=0；飞行时间权重，增大更偏向较短飞行时间。
+    position_variance_weight: 1 # 代价/m²，>=0；板位置协方差迹的权重，增大更偏向低不确定度板。
+    switch_margin: 0.05 # 代价差，>0；换板所需代价改善，增大减少小幅收益导致的换板。
+    minimum_dwell_s: 0.1 # s，>=0；选板最短驻留时间，增大减少频繁换板。
+  impact:
+    speed_sigma_mps: 0.1 # m/s，>=0；弹速标准差，增大扩大预计落点误差。
+    aim_variance_rad2: [0.000001, 0.000001, 0.000001] # rad²，3 项非负旋转方差；增大对应轴指向不确定度。
+    origin_variance_m2: [0.000001, 0.000001, 0.000001] # m²，3 项非负世界 xyz 发射原点方差；增大扩大落点误差。
+    timing_sigma_s: 0.002 # s，>=0；发射时刻标准差，增大提高运动目标落点时序误差。
+    scatter_variance_m2: [0.000001, 0.000001, 0.000001] # m²，3 项非负世界 xyz 散布方差；增大扩大预计落点误差。
+  margin:
+    sigma_multiplier: 3 # 无量纲，>0；落点标准差倍数，增大收紧板内余量，不代表已标定命中概率。
+    reserved_edge_m: 0.002 # m，>=0；预留板边距离，增大收紧允许的落点范围。
+    minimum_normal_speed_mps: 0.1 # m/s，>0；弹板相对法向速度下限，增大拒绝更多近切向交点。
+
+  # 指令门控与稳定支持：三种检测器共用；门限不替代配置外的反馈/权限/标定证据。
+  safety:
+    control_age_s: 0.15 # s，>=fire_age_s；控制所允许的曝光年龄，增大允许控制使用更旧观测。
+    fire_age_s: 0.08 # s，>0且<=control_age_s；开火所允许的曝光年龄，减小更严格要求新观测。
+    feedback_age_s: 0.05 # s，>0；反馈最大年龄，减小更早拒绝过期反馈。
+    operator_age_s: 0.05 # s，>0；独立操作输入最大年龄，减小更严格检查输入新鲜度。
+    yaw_tolerance_rad: 0.01 # rad，>0；yaw 对准误差上限，减小要求更精确对准。
+    pitch_tolerance_rad: 0.01 # rad，>0；pitch 对准误差上限，减小要求更精确对准。
+    settled_observations: 3 # 次，整数>=1；稳定支持所需观测数，增大需要更多连续支持。
+    settled_duration_s: 0.04 # s，>=0；稳定支持最短持续时间，增大延后稳定判定。
+    maximum_gap_s: 0.08 # s，>0；稳定支持允许的最大观测间隔，增大容忍更稀疏观测。
+  # 仅 assist 模式的相对角度修正使用此平滑器，automatic 的绝对瞄准不经过它。
+  smoother:
+    maximum_correction_rad: 0.1 # rad，>0且>=enter_rad；辅助修正幅度上限，增大允许更大角度修正。
+    maximum_rate_radps: 1 # rad/s，>0；辅助修正变化率上限，增大可更快跟随请求。
+    time_constant_s: 0.03 # s，>=0；低通时间常数，增大更平滑但更慢；0 表示不作该低通。
+    enter_rad: 0.02 # rad，leave_rad<=本值<=maximum_correction_rad；进入修正阈值，增大更难开始辅助修正。
+    leave_rad: 0.01 # rad，>=0且<=enter_rad；退出修正阈值，增大更容易结束辅助修正。
+    minimum_dwell_s: 0.02 # s，>=0；平滑器激活状态最短驻留时间，增大减少频繁切换。
+
+detectors:
+  # 传统检测专属参数；不需要模型文件。板型和角点契约仍由 offline/armor.yaml 提供。
+  traditional:
+    config_file: offline/armor.yaml # 基础配置路径；须可读取且 detector.kind=traditional。
+    brightness: 100 # 像素通道值，整数[0,255]；增大更严格筛选亮灯条。
+    color_difference: 50 # 像素通道差，整数[0,255]；增大更严格筛选目标颜色。
+    minimum_light_length_px: 5 # px，>0；最小灯条长度，增大排除更小灯条。
+    minimum_light_ratio: 2 # 长/宽，无量纲，>1；增大要求灯条更加细长。
+    minimum_pair_ratio: 1 # 灯条中心距/平均长度，无量纲，>0；增大排除更近的灯条配对。
+    maximum_pair_ratio: 5 # 同上，>=minimum_pair_ratio；增大允许间距更大的配对。
+    maximum_lightbars: 32 # 条，整数>=2；参与配对的最长灯条数上限，增大增加候选与计算量。
+  # 仅选择对应 YOLO 分支时加载其模型；未选择分支不要求模型文件或推理设备可用。
+  yolov5:
+    config_file: offline/yolov5.yaml # 基础配置路径；须可读取且 detector.kind=yolov5。
+    model_path: ../models/yolov5.xml # 当前 YOLOv5 格式的模型路径；须存在，XML 的 BIN 权重相邻；不自动下载。
+    device: CPU # 非空 OpenVINO 设备名，如 CPU/GPU；须被当前运行环境支持，决定推理设备。
+    confidence: 0.7 # 无量纲，(0,1)；置信度下限，增大保留更少高分候选。
+    nms_iou: 0.3 # 无量纲，(0,1)；NMS 重叠阈值，增大减少重叠抑制。
+    maximum_candidates: 128 # 个，整数>=1且>=maximum_detections；NMS 前候选上限，增大增加候选与计算。
+    maximum_detections: 16 # 个，整数[1,maximum_candidates]；NMS 后输出上限，增大允许更多检测结果。
+  yolo11:
+    config_file: offline/yolo11.yaml # 基础配置路径；须可读取且 detector.kind=yolo11。
+    model_path: ../models/yolo11.xml # 当前 YOLO11 格式的模型路径；须存在，XML 的 BIN 权重相邻；不自动下载。
+    device: CPU # 非空 OpenVINO 设备名，如 CPU/GPU；须被当前运行环境支持，决定推理设备。
+    confidence: 0.7 # 无量纲，(0,1)；置信度下限，增大保留更少高分候选。
+    nms_iou: 0.3 # 无量纲，(0,1)；NMS 重叠阈值，增大减少重叠抑制。
+    maximum_candidates: 128 # 个，整数>=1且>=maximum_detections；NMS 前候选上限，增大增加候选与计算。
+    maximum_detections: 16 # 个，整数[1,maximum_candidates]；NMS 后输出上限，增大允许更多检测结果。
+
+# 只在源码显式启用 ESO 后生效；此处不切换 EKF/ESO，默认 EKF 不使用这些参数。
+# 首版 ESO 要求当前 6 维完整位姿；下面仍为实验初值，不是设备调参结论。
+eso:
+  translation_bandwidth_radps: 10 # rad/s，>0；平移三阶观测器带宽，增大响应更快且更敏感于量测噪声。
+  angular_bandwidth_radps: 10 # rad/s，>0；角 CV/CA 观测器带宽，增大相位/角运动校正更快且更敏感于噪声。
+  linear_jerk_psd: 1 # m²/s⁵，>=0；ESO 平移 CA 的白 jerk 谱密度，增大预测协方差，不直接改变带宽增益。

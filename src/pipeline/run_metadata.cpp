@@ -8,6 +8,18 @@
 
 namespace autoaim::pipeline {
 namespace {
+YAML::Node describe_snapshot(const ConfigurationFileSnapshot& snapshot) {
+  core::Fingerprint fingerprint;
+  fingerprint.append(snapshot.contents.data(), snapshot.contents.size());
+  std::ostringstream digest;
+  digest << std::hex << std::setw(16) << std::setfill('0') << fingerprint.value();
+  YAML::Node node;
+  node["path"] = std::filesystem::absolute(snapshot.path).lexically_normal().string();
+  node["bytes"] = fingerprint.bytes();
+  node["fnv1a64"] = digest.str();
+  return node;
+}
+
 YAML::Node describe_file(const std::filesystem::path& path) {
   std::ifstream input(path, std::ios::binary);
   if (!input)
@@ -75,23 +87,44 @@ YAML::Node timing(const WallTimeSummary& value) {
 } // namespace
 
 YAML::Node describe_run(const std::filesystem::path& configuration, const PipelineConfig& loaded) {
+  auto snapshot = loaded.configuration_snapshot;
+  if (!snapshot) {
+    // Preserve metadata support for a caller-created PipelineConfig with an explicit source file.
+    const auto source = load_pipeline_config(configuration);
+    if (!source)
+      throw std::invalid_argument(source.error().message);
+    snapshot = source.value().configuration_snapshot;
+  }
   YAML::Node node;
-  node["run_metadata_schema_version"] = 2;
-  node["configuration_file"] = describe_file(configuration);
-  const auto config = YAML::LoadFile(configuration.string());
-  node["configuration"] = config;
+  node["run_metadata_schema_version"] = 3;
+  node["configuration_file"] = describe_snapshot(snapshot->entry);
+  node["configuration"] = YAML::Load(snapshot->entry.contents);
+  node["base_configuration_file"] = describe_snapshot(snapshot->base);
+  node["base_configuration"] = YAML::Load(snapshot->base.contents);
+  node["fast_choose_file"] = snapshot->fast_choose
+      ? describe_snapshot(*snapshot->fast_choose) : YAML::Node(YAML::NodeType::Null);
+  node["fast_choose_configuration"] = snapshot->fast_choose
+      ? YAML::Load(snapshot->fast_choose->contents) : YAML::Node(YAML::NodeType::Null);
+  auto config = YAML::Clone(snapshot->effective);
+  // The input override is applied after loading, in both the ordinary and batch entrypoints.
+  config["input_manifest"] = std::filesystem::absolute(loaded.input_manifest).lexically_normal().string();
+  config["eso"]["translation_bandwidth_radps"] = loaded.tracker.eso.translation_bandwidth_radps;
+  config["eso"]["angular_bandwidth_radps"] = loaded.tracker.eso.angular_bandwidth_radps;
+  config["eso"]["linear_jerk_psd"] = loaded.tracker.eso.linear_jerk_psd;
+  node["effective_configuration"] = config;
+  node["estimator"]["kind"] = estimation::estimator_name;
+  node["estimator"]["eso_parameters_effective"] = estimation::eso_enabled;
+  node["estimator"]["eso_parameters"] = YAML::Clone(config["eso"]);
   node["device_id"] = loaded.guard.device_id;
   node["configuration_id"] = loaded.guard.configuration_id;
   node["input_manifest"] = std::filesystem::absolute(loaded.input_manifest).string();
-  const auto calibration_file =
-      configuration.parent_path() / config["calibration_file"].as<std::string>();
+  const std::filesystem::path calibration_file(config["calibration_file"].as<std::string>());
   node["calibration_file"] = describe_file(calibration_file);
   const auto calibration_config = core::Config::load(calibration_file);
   if (!calibration_config)
     throw std::invalid_argument(calibration_config.error().message);
   for (const auto& file : config["geometry_files"])
-    node["geometry_files"].push_back(describe_file(
-        configuration.parent_path() / file.as<std::string>()));
+    node["geometry_files"].push_back(describe_file(file.as<std::string>()));
   const auto& calibration = loaded.calibration;
   node["calibration_reports"]["intrinsics"] = describe_calibration_report(
       calibration_config.value(), calibration_file.parent_path(),

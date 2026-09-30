@@ -211,6 +211,10 @@ int run_batch_benchmark(int argc, char** argv) {
       options.pose_truth = vision::PoseTruthLimits{*reference, *position_limit, *rotation_limit};
     }
     vision::SequenceEvaluation check(options);
+    // config/fast_choose.yaml is captured once per path for this invocation, before any run.
+    auto loaded_configurations = load_pipeline_configs(configurations);
+    if (!loaded_configurations)
+      throw std::invalid_argument(loaded_configurations.error().message);
     YAML::Node report, costs;
     report["report_schema_version"] = 1;
     report["command_line"] = std::vector<std::string>(argv, argv + argc);
@@ -231,11 +235,9 @@ int run_batch_benchmark(int argc, char** argv) {
     std::optional<vision::TeamColor> common_enemy;
     std::optional<DatasetFacts> facts;
 
-    for (const auto& path : configurations) {
-      auto loaded = load_pipeline_config(path);
-      if (!loaded)
-        throw std::invalid_argument(loaded.error().message);
-      auto config = std::move(loaded).value();
+    for (std::size_t index = 0; index < configurations.size(); ++index) {
+      const auto& path = configurations[index];
+      auto config = std::move(loaded_configurations.value()[index]);
       config.input_manifest = dataset;
       const auto enemy = std::visit([](const auto& detector) {
         return detector.enemy;

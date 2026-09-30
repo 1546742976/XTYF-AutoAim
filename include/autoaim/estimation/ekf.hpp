@@ -1,20 +1,10 @@
 #pragma once
 
 #include "autoaim/estimation/measurement_model.hpp"
+#include "autoaim/estimation/filter_types.hpp"
 #include <memory>
 
 namespace autoaim::estimation {
-struct Innovation {
-  Eigen::MatrixXd covariance;
-  double nis;
-};
-
-struct UpdateReport {
-  bool accepted;
-  double prior_nis;
-  int observation_dimension;
-};
-
 // 单写者数值滤波器，不拥有时钟/任务/开火策略；predict 的 dt 由 Tracker 给出。
 class Ekf {
 public:

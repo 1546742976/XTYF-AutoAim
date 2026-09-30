@@ -28,7 +28,7 @@ int main() {
       const estimation::TargetState state{
           math::Point3<math::WorldFrame>({3, 0, 1}), {0, 0, 0}, core::Radians(0.2), 0, 0};
 
-      estimation::Ekf filter(
+      estimation::StateEstimator filter(
           state, estimation::StateCovariance::Identity() * 0.001,
           std::make_shared<const estimation::MotionModel>(0.1, 0.1, core::Seconds(1)));
 

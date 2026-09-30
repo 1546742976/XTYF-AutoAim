@@ -1,5 +1,6 @@
 #include "autoaim/pipeline/bootstrap.hpp"
 #include "autoaim/pipeline/frame_sync.hpp"
+#include "config_composition.hpp"
 #include <iostream>
 
 namespace autoaim::pipeline {
@@ -16,12 +17,15 @@ const vision::PlateDimensions* plate_dimensions(const PipelineConfig& config,
   return found == config.plate_sizes.end() ? nullptr : &found->second;
 }
 
-core::Result<PipelineConfig> load_pipeline_config(const std::filesystem::path& path) {
+namespace {
+core::Result<PipelineConfig>
+assemble_pipeline_config(std::shared_ptr<const PipelineConfigurationSnapshot> snapshot) {
   using namespace core;
   using Result = core::Result<PipelineConfig>;
 
   try {
-    auto loaded = Config::load(path);
+    const auto& path = snapshot->base.path;
+    auto loaded = Config::parse(YAML::Dump(snapshot->effective));
 
     if (!loaded)
       throw std::invalid_argument(loaded.error().message);
@@ -133,6 +137,7 @@ core::Result<PipelineConfig> load_pipeline_config(const std::filesystem::path& p
         (authority.mode == ControlMode::automatic && mode_name != "automatic"))
       throw std::invalid_argument("Initial mode conflicts with role/explicit-enable contract");
 
+    // 基础场景契约：calibration_file、geometry_files；路径已按声明文件解析。
     auto calibration_file = Config::load(file("calibration_file"));
 
     if (!calibration_file)
@@ -161,6 +166,7 @@ core::Result<PipelineConfig> load_pipeline_config(const std::filesystem::path& p
           std::make_shared<const estimation::GeometryProfile>(std::move(profile).value()));
     }
 
+    // 快调 common.detector.enemy；检测 kind 与板型映射仍来自基础场景契约。
     const auto enemy_name = c.require<std::string>("detector.enemy");
     const auto enemy = enemy_name == "red" ? vision::TeamColor::red
                        : enemy_name == "blue"
@@ -171,6 +177,7 @@ core::Result<PipelineConfig> load_pipeline_config(const std::filesystem::path& p
     vision::DetectorOptions detector = vision::TraditionalOptions{enemy, 1, 1, 1, 1, 1, 2, 2};
 
     if (detector_name == "traditional") {
+      // 快调 detectors.traditional：亮度、灯条形状、配对阈值及候选上限。
       detector = vision::TraditionalOptions{enemy,
                                             c.require<int>("detector.brightness"),
                                             c.require<int>("detector.color_difference"),
@@ -185,6 +192,7 @@ core::Result<PipelineConfig> load_pipeline_config(const std::filesystem::path& p
         std::get<vision::TraditionalOptions>(detector).plate_type =
             vision::parse_armor_size(c.require<std::string>("detector.plate_type"));
     } else if (detector_name == "yolov5" || detector_name == "yolo11") {
+      // 快调 detectors.<kind>：model_path、device、confidence、nms_iou 和数量上限。
       detector = vision::Yolov5Options{file("detector.model_path").string(),
                                        c.require<std::string>("detector.device"),
                                        enemy,
@@ -216,6 +224,8 @@ core::Result<PipelineConfig> load_pipeline_config(const std::filesystem::path& p
     } else
       throw std::invalid_argument("Unsupported detector.kind");
 
+    // 快调 common.motion：平移/角过程噪声、预测时域与角加速度约束。
+#if !AUTOAIM_I3_LINEAR_CA
     const auto cv_model = std::make_shared<const estimation::MotionModel>(
         number("motion.linear_accel_psd"), number("motion.angular_accel_psd"),
         seconds("motion.maximum_horizon_s"));
@@ -223,11 +233,39 @@ core::Result<PipelineConfig> load_pipeline_config(const std::filesystem::path& p
     const auto ca_model = std::make_shared<const estimation::MotionModel>(
         number("motion.linear_accel_psd"), number("motion.angular_jerk_psd"),
         seconds("motion.maximum_horizon_s"), number("motion.maximum_alpha_radps2"));
+#else
+    // CMake 选择 I3-LINEAR-CA；保留角 CV/CA 的参数、切换与预测时域。
+    // 仅启用现有平移 CA，仍使用 EKF；这不是 IMM 或相位多峰实现。
+    // 实验白 jerk PSD，单位 m²/s⁵；不复用单位为 m²/s³ 的 linear_accel_psd。
+    // 1.0 是隔离对照初值，不表示设备标定；不增加配置项或公共接口。
+    constexpr double experimental_linear_jerk_psd = 1.0;
+    const auto cv_model = std::make_shared<const estimation::MotionModel>(
+        estimation::MotionModel(number("motion.linear_accel_psd"),
+                                number("motion.angular_accel_psd"),
+                                seconds("motion.maximum_horizon_s"))
+            .with_linear_acceleration(experimental_linear_jerk_psd));
 
+    const auto ca_model = std::make_shared<const estimation::MotionModel>(
+        estimation::MotionModel(number("motion.linear_accel_psd"),
+                                number("motion.angular_jerk_psd"),
+                                seconds("motion.maximum_horizon_s"),
+                                number("motion.maximum_alpha_radps2"))
+            .with_linear_acceleration(experimental_linear_jerk_psd));
+#endif
+
+    // 快调 common.tracker：初始方差、NIS、身份/几何、收敛和健康阈值。
+    // 角运动切换阈值、计数和驻留时间同时取自 common.motion。
     estimation::StateCovariance initial = estimation::StateCovariance::Zero();
-    const auto initial_diagonal = values("tracker.initial_variance", 9);
+    auto initial_diagonal = c.require<std::vector<double>>("tracker.initial_variance");
+    if ((initial_diagonal.size() != 9 && initial_diagonal.size() != 12) ||
+        !std::all_of(initial_diagonal.begin(), initial_diagonal.end(), [](double value) {
+          return std::isfinite(value) && value >= 0;
+        }))
+      throw std::invalid_argument("Invalid dimensions/values: tracker.initial_variance");
+    // 旧九项配置追加平移加速度初始方差；默认 CV 模型会清除这些失活维度。
+    initial_diagonal.resize(estimation::state_dimension, 1);
 
-    for (int i = 0; i < 9; ++i)
+    for (int i = 0; i < estimation::state_dimension; ++i)
       initial(i, i) = initial_diagonal[i];
 
     const auto nis_values = values("tracker.nis_limits", 6);
@@ -254,16 +292,26 @@ core::Result<PipelineConfig> load_pipeline_config(const std::filesystem::path& p
         number("tracker.initial_alpha_variance"),
         c.require<std::string>("configuration_id")};
 
+    // 快调 eso：三项实验参数；是否应用由编译时 StateEstimator 别名决定。
+    if (c.contains("eso")) {
+      config_detail::validate_eso(snapshot->effective["eso"]);
+      tracker.eso = {number("eso.translation_bandwidth_radps"),
+                     number("eso.angular_bandwidth_radps"), number("eso.linear_jerk_psd")};
+    }
+
+    // 快调 common.targets：目标数量、关联与同目标空间距离。
     estimation::TrackerSetOptions targets{
         size("targets.maximum_count"), number("targets.association_margin"),
         Metres(number("targets.maximum_same_target_separation_m"))};
 
+    // 快调 common.queue：池/队列/在途容量与最大年龄；图像尺寸来自标定契约。
     QueueOptions queue{
         size("queue.pool_capacity"),   size("queue.pending_capacity"),
         size("queue.in_flight_limit"), calibration.value().width(),
         calibration.value().height(),  static_cast<std::size_t>(calibration.value().width()) * 3,
         seconds("queue.maximum_age_s")};
 
+    // 快调 common.pnp：重投影、视角、信息量、噪声与历史位姿门限。
     vision::PnpQualityOptions pnp{number("pnp.maximum_rms_px"),
                                   number("pnp.maximum_corner_error_px"),
                                   number("pnp.minimum_edge_px"),
@@ -275,6 +323,7 @@ core::Result<PipelineConfig> load_pipeline_config(const std::filesystem::path& p
                                   radians("pnp.prior_rotation_gate_rad"),
                                   seconds("pnp.prior_maximum_age_s")};
 
+    // 基础场景契约：plate_sizes、corners、发射原点与参考姿态，不由快调覆盖。
     std::map<int, vision::PlateDimensions> sizes;
     std::map<vision::ArmorSize, vision::PlateDimensions> typed_sizes;
 
@@ -312,6 +361,7 @@ core::Result<PipelineConfig> load_pipeline_config(const std::filesystem::path& p
     if (indices.size() != 4)
       throw std::invalid_argument("Corner mapping requires four indices");
 
+    // 快调 common.pnp.additional_pose_variance：六维附加位姿方差。
     vision::PoseCovariance additional = vision::PoseCovariance::Zero();
     const auto additional_diagonal = values("pnp.additional_pose_variance", 6);
 
@@ -323,6 +373,7 @@ core::Result<PipelineConfig> load_pipeline_config(const std::filesystem::path& p
                tolerance_pitch = radians("safety.pitch_tolerance_rad");
 
     PipelineConfig result{
+        // 快调 common.input_manifest、program_fire_requested；角色仍由基础配置声明。
         file("input_manifest"),
         role,
         c.require<bool>("program_fire_requested"),
@@ -334,6 +385,7 @@ core::Result<PipelineConfig> load_pipeline_config(const std::filesystem::path& p
         tracker,
         targets,
         queue,
+        // 快调 common.history：历史容量及最大插值间隔。
         size("history.capacity"),
         seconds("history.maximum_gap_s"),
         pnp,
@@ -341,27 +393,33 @@ core::Result<PipelineConfig> load_pipeline_config(const std::filesystem::path& p
         vision::CornerMapping({indices[0], indices[1], indices[2], indices[3]},
                               c.require<std::string>("corners.model_id"),
                               c.require<std::string>("corners.mapping_id"), Evidence::declared()),
+        // 快调 common.refinement：角点精修开关、像素阈值与移动/支持范围。
         {c.require<int>("refinement.brightness"), c.require<int>("refinement.color_difference"),
          number("refinement.search_radius_px"), number("refinement.maximum_shift_px"),
          size("refinement.minimum_pixels")},
         c.require<bool>("refinement.enabled"),
         additional,
+        // 快调 common.prediction：几何方差与未知速度不确定度。
         {number("prediction.geometry_position_variance_m2"),
          number("prediction.geometry_rotation_variance_rad2"),
          number("prediction.unknown_velocity_sigma_mps")},
+        // 快调 common.ballistic 的时域/距离；gravity_mps2 保留在基础场景。
         decision::BallisticModel(vector3("ballistic.gravity_mps2"),
                                  seconds("ballistic.maximum_flight_s"),
                                  Metres(number("ballistic.minimum_range_m"))),
+        // 快调 common.intercept、armor：拦截收敛和装甲板选择参数。
         {size("intercept.maximum_iterations"), seconds("intercept.time_tolerance_s"),
          Metres(number("intercept.position_tolerance_m"))},
         {number("armor.minimum_incidence_cosine"), number("armor.direction_weight"),
          number("armor.flight_time_weight"), number("armor.position_variance_weight"),
          number("armor.switch_margin"), seconds("armor.minimum_dwell_s")},
+        // 快调 common.impact、margin：弹道/时序/散布不确定度与命中边距。
         {number("impact.speed_sigma_mps"), covariance3("impact.aim_variance_rad2"),
          covariance3("impact.origin_variance_m2"), number("impact.timing_sigma_s"),
          covariance3("impact.scatter_variance_m2")},
         {number("margin.sigma_multiplier"), Metres(number("margin.reserved_edge_m")),
          number("margin.minimum_normal_speed_mps")},
+        // 快调 common.safety、targets：时效、瞄准充分性及目标选择阈值。
         {tolerance_yaw, tolerance_pitch, size("safety.settled_observations"),
          seconds("safety.settled_duration_s"), seconds("safety.maximum_gap_s"),
          seconds("safety.fire_age_s"), seconds("safety.feedback_age_s")},
@@ -375,9 +433,11 @@ core::Result<PipelineConfig> load_pipeline_config(const std::filesystem::path& p
          c.require<std::string>("configuration_id"),
          tolerance_yaw,
          tolerance_pitch},
+        // 快调 common.smoother：辅助修正限幅、速率、滤波与迟滞。
         {radians("smoother.maximum_correction_rad"), number("smoother.maximum_rate_radps"),
          seconds("smoother.time_constant_s"), radians("smoother.enter_rad"),
          radians("smoother.leave_rad"), seconds("smoother.minimum_dwell_s")},
+        // 快调 common 的发布周期、意图寿命和发射延迟，分别对应以下三个 *_s 键。
         seconds("publish_period_s"),
         seconds("intent_lifetime_s"),
         seconds("after_send_delay_s"),
@@ -386,7 +446,9 @@ core::Result<PipelineConfig> load_pipeline_config(const std::filesystem::path& p
             Eigen::Quaterniond(reference[0], reference[1], reference[2], reference[3])),
         Evidence::declared()};
     result.typed_plate_sizes = std::move(typed_sizes);
+    result.configuration_snapshot = std::move(snapshot);
     result.guard.operator_maximum_age = result.infantry.input_maximum_age;
+    // 快调 common.operator_input.button_mode；输入来源 kind 保留为基础场景契约。
     if (c.contains("operator_input")) {
       const auto source = c.require<std::string>("operator_input.kind");
       const auto mode = c.require<std::string>("operator_input.button_mode");
@@ -423,5 +485,37 @@ core::Result<PipelineConfig> load_pipeline_config(const std::filesystem::path& p
   } catch (const std::exception& error) {
     return Result::failure(ErrorCode::invalid_input, error.what());
   }
+}
+} // namespace
+
+core::Result<std::vector<PipelineConfig>>
+load_pipeline_configs(const std::vector<std::filesystem::path>& paths) {
+  using Result = core::Result<std::vector<PipelineConfig>>;
+  try {
+    config_detail::Composition composition;
+    std::vector<std::shared_ptr<const PipelineConfigurationSnapshot>> snapshots;
+    snapshots.reserve(paths.size());
+    // 先完成全部文件快照；装配任何 run 时不重新读取共享快调。
+    for (const auto& path : paths)
+      snapshots.push_back(composition.resolve(path));
+    std::vector<PipelineConfig> result;
+    result.reserve(snapshots.size());
+    for (auto& snapshot : snapshots) {
+      auto loaded = assemble_pipeline_config(std::move(snapshot));
+      if (!loaded)
+        return Result::failure(loaded.error().code, loaded.error().message);
+      result.push_back(std::move(loaded).value());
+    }
+    return Result::success(std::move(result));
+  } catch (const std::exception& error) {
+    return Result::failure(core::ErrorCode::invalid_input, error.what());
+  }
+}
+
+core::Result<PipelineConfig> load_pipeline_config(const std::filesystem::path& path) {
+  auto loaded = load_pipeline_configs({path});
+  if (!loaded)
+    return core::Result<PipelineConfig>::failure(loaded.error().code, loaded.error().message);
+  return core::Result<PipelineConfig>::success(std::move(loaded.value().front()));
 }
 } // namespace autoaim::pipeline

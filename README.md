@@ -10,6 +10,7 @@
 
 ## 阅读导航
 
+- [快速替换算法：精修 / LM / 平移 CA / 推理提示 / 队列预分配 / ESO](additional_information.md#quick-algorithm-swap)
 - [先理解处理流程](#1-先理解处理流程)
 - [编译并跑通第一个示例](#2-编译并跑通第一个示例)
 - [目录和文件怎么看](#3-目录和文件怎么看)
@@ -48,6 +49,9 @@
 | 请求与许可 | 上游可以请求控制/开火，但只有控制层检查通过后才形成最终许可 |
 
 ## 2. 编译并跑通第一个示例
+
+不想在宿主安装 C++ 依赖时，可用 [§2.4 Docker 环境](#24-docker-环境)；
+下面的本机构建方式继续保留。容器验收状态见 [构建历史](build_history.md#docker-20260930)。
 
 以下命令在 **Ubuntu / WSL 的 Bash 终端、仓库根目录**执行，不是在 Windows PowerShell 中直接执行。默认 C++17，可通过 CMake 选择 C++20。
 
@@ -99,30 +103,41 @@ Release 构建将目录改为 `build-release`、构建类型改为 `Release`。
 | --- | --- |
 | `BUILD_TESTING` | ON；构建测试并注册到 CTest |
 | `AUTOAIM_OPENVINO` | ON；编译 YOLOv5/YOLO11 推理后端 |
+| `AUTOAIM_I1_CONTRAST_IRLS` | OFF；角点中心轴对比度精修 |
+| `AUTOAIM_I2_LM` | OFF；IPPE 候选角点重投影 LM 精修 |
+| `AUTOAIM_I3_LINEAR_CA` | OFF；EKF 平移恒加速度对照，与 ESO 互斥 |
+| `AUTOAIM_I9_THROUGHPUT` | OFF；OpenVINO THROUGHPUT 提示，要求 OpenVINO ON |
+| `AUTOAIM_I9_PREALLOC` | OFF；pending 容器预分配，保留队列和租约语义 |
+| `AUTOAIM_USE_ESO` | OFF；选择 ESO 并注册对应专项，参数仍来自快调文件 |
 | `AUTOAIM_TEST_YOLOV5_MODEL`、`AUTOAIM_TEST_YOLO11_MODEL` | 空；提供模型 XML 的绝对路径后增加真实权重 CPU 冒烟测试，配套 BIN 与 XML 相邻 |
 | `AUTOAIM_SANITIZERS` | OFF；开启 GCC/Clang 的地址与未定义行为检查 |
 | `AUTOAIM_HIKROBOT` | OFF；编译海康后端，不开放硬件运行入口 |
 | `AUTOAIM_HIKROBOT_INCLUDE`、`AUTOAIM_HIKROBOT_LIBRARY` | 开启海康后端时显式提供 SDK 头目录和库文件 |
 
+修改根 CMake 的 `option()` 默认值只影响新构建目录；已有目录必须用 `-D选项=ON/OFF`
+覆盖缓存，或先清除该缓存项。算法验证脚本默认 Debug，可用 `--build-type Release` 选择 Release。
+
 ### 2.3 不需要相机或模型的完整示例
 
-这里使用传统灯条检测的合成配置，不代表实际图像处理必须使用传统算法。
+统一入口 `config/fast_choose.yaml` 默认选择 YOLOv5，需要 OpenVINO 和对应模型。
+下面的无模型示例先将其中 `active_detector` 改为 `traditional`；也可在三条命令中
+使用固定传统入口 `--config config/offline/armor.yaml`。调参后重启生效，不需要重新编译。
 输出目录/文件必须是新路径；重复执行时换一组名字，不覆盖已有结果。
 
 ```bash
 # 1. 生成 30 帧灯条图片、事件和真值
-build-debug/synthetic_sim --config config/offline/armor.yaml \
+build-debug/synthetic_sim --config config/fast_choose.yaml \
   --output out/quickstart-data --frames 30
 
 # 2. 走完整处理链，输出命令、UART14 字节记录和录制会话
-build-debug/offline_replay --config config/offline/armor.yaml \
+build-debug/offline_replay --config config/fast_choose.yaml \
   --input out/quickstart-data/events.yaml \
   --output out/quickstart-data/commands.tsv \
   --uart-output out/quickstart-data/uart.hex \
   --record-session out/quickstart-recording
 
 # 3. 在图片上画出检测和位姿结果，不弹出相机窗口
-build-debug/replay_visualizer --config config/offline/armor.yaml \
+build-debug/replay_visualizer --config config/fast_choose.yaml \
   --input out/quickstart-data/events.yaml --output out/quickstart-view
 
 # 4. 统计命令记录中的源数据年龄
@@ -142,6 +157,153 @@ build-debug/pipeline_metrics out/quickstart-data/commands.tsv --fire-age-s 0.08
 示例缺少真实设备证据，最终 `control=0、shoot=0` 是预期结果，不代表程序没有处理图片。
 `NA/null` 的首次有效控制写入指标表示没有这样的写入，不是零延迟。合成图只用于测试流程，不能衡量真实识别精度。
 
+### 2.4 Docker 环境
+
+先确认 `docker info` 能连接 **Linux/amd64** 引擎；Docker 客户端存在不代表引擎可用。
+Windows 可直接使用 PowerShell 中的 Docker Desktop。WSL Bash 还需要已有的 Docker 集成，
+不能把 Windows 端可用当成 WSL 端也已配置。本项目不会自动启动、安装或重配 Docker。
+
+[Dockerfile](Dockerfile) 固定 Ubuntu 22.04 镜像摘要，默认 OpenVINO 2026.3.1、CPU。
+首次构建联网下载官方依赖，只安装到镜像；启动容器不安装依赖，也不自动启动程序。
+开发依赖复用 [安装脚本](install_dependence.sh)，不把宿主现有 `/usr`、旧构建缓存打包进去。
+BuildKit 的 APT 下载缓存用于中断后复用已下载包，不进入镜像层；它仍会占用 Docker 存储。
+
+| 构建目标 | 装了什么 / 用来做什么 |
+| --- | --- |
+| `dev` | 编译器、CMake、Python 与开发依赖；宿主编辑源码，容器编译和测试 |
+| `build` | 内部 Release 构建阶段，生成 `Runtime` 安装组件 |
+| `runtime` | 11 个既有程序、示例配置及运行库；不装源码、测试、编译器或 CMake |
+| `sdk-check` | 可选海康 SDK 编译检查；默认构建不需要 SDK，不运行设备 |
+
+在仓库根目录构建两个常用镜像（PowerShell / Bash 相同）：
+
+```text
+docker compose build dev runtime
+```
+
+Compose 默认非 root、断网、只读根文件系统，无设备映射/特权权限；只允许临时目录、
+独立编译卷和输出目录写入。直接 `docker run` 时需显式带上相同限制，镜像本身不能强制断网。
+源码默认只读挂载，宿主编辑器仍可编辑原文件，容器下一次编译会读到变化。
+开发容器的 `/tmp` 允许执行 CTest 的临时程序，仍禁用 suid 和设备文件；
+运行容器的 `/tmp` 保持不可执行，不通过放宽运行容器权限来通过开发测试。
+
+首次演示可准备空模型、数据目录和输出目录。在 **PowerShell** 执行：
+
+```powershell
+New-Item -ItemType Directory -Force out/docker-models,out/docker-data,out/docker | Out-Null
+$env:AUTOAIM_MODELS_DIR = (Resolve-Path out/docker-models -ErrorAction Stop).Path
+$env:AUTOAIM_DATA_DIR = (Resolve-Path out/docker-data -ErrorAction Stop).Path
+$env:AUTOAIM_OUTPUT_DIR = (Resolve-Path out/docker -ErrorAction Stop).Path
+```
+
+在 **Linux / 已集成 Docker 的 WSL Bash** 则执行：
+
+```bash
+mkdir -p out/docker-models out/docker-data out/docker
+export AUTOAIM_MODELS_DIR="$PWD/out/docker-models"
+export AUTOAIM_DATA_DIR="$PWD/out/docker-data"
+export AUTOAIM_OUTPUT_DIR="$PWD/out/docker"
+export AUTOAIM_UID="$(id -u)" AUTOAIM_GID="$(id -g)"
+```
+
+UID/GID 默认 1000，须为非零。改变后重新构建镜像，并使用新的 Compose 项目名创建编译卷，
+例如 `docker compose -p xtyf-myuser build dev runtime`；所有后续命令保持相同 `-p`。
+已有卷不会自动改属主，不执行递归 chown。输出目录需事先允许该用户写入。
+
+| 宿主输入 | 容器位置 | 权限 |
+| --- | --- | --- |
+| 仓库根目录（仅 dev） | `/workspace/src` | 只读 |
+| Compose 编译卷（仅 dev） | `/workspace/build` | 可写；不复用宿主 CMakeCache |
+| `AUTOAIM_MODELS_DIR` | `/models` | 只读；YOLO XML/BIN 放在同一目录 |
+| `AUTOAIM_DATA_DIR` | `/data` | 只读；录像转换后的 PNG/YAML 会话 |
+| `AUTOAIM_CONFIG_DIR`，默认仓库 `config/` | `/config` | 只读；自有标定和配置可另行指定 |
+| `AUTOAIM_OUTPUT_DIR` | `/output` | 可写；容器移除后保留结果 |
+
+挂载源目录必须事先存在。Compose 已设置 `create_host_path: false`，但本机 Docker Desktop
+仍曾自动创建不存在的 Windows 源目录；不能仅依靠该选项检查拼写。PowerShell 设置自有路径
+时沿用上面的 `Resolve-Path -ErrorAction Stop`，Bash 设置后用 `test -d` 检查目录，再运行
+Compose。`--help` 不读取数据，不能用它验证挂载内容是否正确。
+配置中的模型/输入路径须使用容器路径，
+例如 `/models/yolov5.xml`、`/data/events.yaml`，不填写 `E:\...`，工具不改写原配置。
+镜像内合成示例在 `/opt/autoaim/share/autoaim/config/offline/`，不是设备标定。
+安装时同时保留其上级 `config/fast_choose.yaml`；外置配置也要保留该引用关系。
+
+进入开发容器后，按下列方式构建（首行在宿主执行，其余三行在容器内执行）：
+
+```bash
+docker compose run --rm dev
+cmake -S /workspace/src -B /workspace/build/debug -DCMAKE_BUILD_TYPE=Debug
+cmake --build /workspace/build/debug --parallel 2
+ctest --test-dir /workspace/build/debug --output-on-failure
+```
+
+完整容器矩阵有显式脚本，运行较久且占用编译卷；输出名必须未使用。
+按 `/models/yolov5.xml`、`/models/yolo11.xml` 查找模型，配套 BIN 必须存在。
+无模型时明确记录相应测试未验收，不会下载模型。脚本不启用默认关闭的 CMake 算法候选。
+
+```text
+docker compose run --rm dev bash tools/container/verify.sh /output/validation-01
+```
+
+空间有限时可在 `run` 后加 `-e KEEP_BUILD_ARTIFACTS=0`：每个配置通过后只对该次新建的
+构建目录执行 `clean`，保留缓存、命令和验收清单；再次使用程序需要重建。不清理历史卷或目录。
+
+只运行已打包程序，不挂载源码或编译卷：
+
+```text
+docker compose run --rm runtime offline_replay --help
+docker compose run --rm runtime annotate_session --self-test
+docker compose run --rm runtime synthetic_sim --config /opt/autoaim/share/autoaim/config/offline/armor.yaml --output /output/demo-01 --frames 6
+docker compose run --rm runtime bench_detector --dataset /output/demo-01/events.yaml --config /opt/autoaim/share/autoaim/config/offline/armor.yaml --iou 0.5 --output /output/report-01
+```
+
+独立的 [运行镜像检查脚本](tools/container/runtime-smoke.sh) 可只读挂载后显式运行；
+它检查回放、标注自检、报告重复一致与硬件拒绝，不会作为镜像启动动作。
+若 `/models` 有配套 YOLO XML/BIN，还使用 `/config/offline/yolov5.yaml`、`yolo11.yaml`
+执行实际 CPU 推理，验证运行库、CPU 插件与 IR 前端；配置须指向相应挂载模型。
+缺模型时明确记录该项未验收，传统合成示例不替代 YOLO 检查。
+
+Windows 注意：Docker Desktop 的 Windows 绑定输出目录可能不支持标注工具要求的
+原子且不覆盖目录发布，表现为 `Atomic no-overwrite publish failed: Invalid argument`。
+这不是标注校验失败。不要绕过工具检查；导出、检查、应用可改用 Linux 命名卷：
+
+```text
+docker compose run --name xtyf-annotation-export --volume xtyf-annotation-work:/output runtime annotate_session --export /output/draft-01 --session /data
+docker cp xtyf-annotation-export:/output/draft-01 ./out/draft-01
+docker rm xtyf-annotation-export
+```
+
+这三步分别是工具原子发布、人工导出已完成产物、删除本次停止的容器；第二步不是工具的
+原子发布替代实现。命名卷仍保留结果，重复运行须换新输出名，宿主复制目标也须事先不存在。
+Linux 用户可继续使用支持该操作的宿主绑定目录。普通回放和评测仍可写 Windows 输出目录。
+
+可选 SDK：只接受用户已取得的 Linux amd64 SDK 目录，作为 BuildKit 命名输入。
+将下列路径换成实际目录；`MVS_INCLUDE`、`MVS_LIBRARY` 均相对于该目录。
+不执行 SDK 安装程序，默认镜像不包含 SDK，不映射相机/串口。
+
+```text
+docker build --platform linux/amd64 --target sdk-check --build-context mvs=/absolute/path/to/sdk --build-arg MVS_INCLUDE=include --build-arg MVS_LIBRARY=lib/amd64/libMvCameraControl.so -t xtyf-autoaim:sdk-check .
+```
+
+程序及配置安装也可在已有本机构建中使用，不需要 Docker：
+
+```bash
+cmake --install build-release --prefix "$PWD/out/install-release" --component Runtime
+```
+
+离线转移已验收镜像（文件名必须未使用）；模型、数据及 Docker 引擎不包含在镜像归档中：
+
+```text
+docker image save -o xtyf-autoaim-images.tar xtyf-autoaim:dev xtyf-autoaim:runtime
+docker image load -i xtyf-autoaim-images.tar
+docker image inspect xtyf-autoaim:dev xtyf-autoaim:runtime
+```
+
+镜像内 `/opt/autoaim-environment/` 保存软件包版本，运行程序来源在
+`/opt/autoaim/share/autoaim/autoaim_build_information.json`。镜像 ID、实际大小和日志另记入
+构建历史。固定摘要和指定 OpenVINO 版本不保证未来 APT 仍提供全部包；缺版本时应修正
+来源或另行批准升级，不能静默改用最新版。SDK 编译和离线镜像均不证明设备可用。
+
 ## 3. 目录和文件怎么看
 
 ```text
@@ -152,11 +314,15 @@ XTYF-AutoAim/
 ├── src/                  .cpp：各接口背后的算法和处理逻辑
 │   └── 九个模块目录/
 ├── config/
+│   ├── fast_choose.yaml  日常调参与检测器选择；启动读取，修改后重启生效
 │   ├── offline/          合成场景、YOLO、标定数据等离线配置
 │   └── hardware/         待填写的设备参数模板；不是可运行设备配置
 ├── tools/                合成数据、协议、可视化、指标工具的入口
 ├── tests/                单元测试、契约测试、合成场景及测试数据
 ├── CMakeLists.txt        全部构建目标、源文件清单、依赖规则和测试注册
+├── Dockerfile           开发/构建/运行镜像及可选 SDK 编译目标
+├── compose.yaml         只读输入、独立编译卷、可写输出和离线运行约定
+├── .dockerignore        限定发送给镜像构建器的文件，不带旧输出和外部资产
 ├── install_dependence.sh 人工依赖安装脚本
 ├── .clang-format         C++ 排版约定
 ├── additional_information.md  九模块文件详解、技术规格、协作约定与实施历史
@@ -190,6 +356,29 @@ XTYF-AutoAim/
 | mission | 角色与模式、人工接管、目标选择和控制请求 | [M7：文件与职责](additional_information.md#module-mission) |
 | control | 最终许可、协议编码、唯一发布线程及写失败处理 | [M8：文件与职责](additional_information.md#module-control) |
 | pipeline | 配置装配、姿态同步、队列与整条处理链的启停 | [M9：文件与职责](additional_information.md#module-pipeline) |
+
+当前默认状态估计器仍为 **EKF**。公共状态为 12 维，平移加速度在默认 CV 模型中失活。
+实验 ESO 与其它五个同接口候选统一由根 [CMakeLists.txt](CMakeLists.txt) 的六个布尔开关选择，
+默认全部 OFF；启用设 ON，回退显式设 OFF，再重新配置、编译和测试。
+无需修改 cpp/hpp 注释、函数或 `StateEstimator` 别名。ESO 仅支持当前完整位姿观测，
+参数与批量融合约定见[手册](additional_information.md#experimental-eso)。
+
+可先在 WSL/Linux 的独立副本验证，源文件保持不变：
+
+```bash
+# 输出目录必须尚不存在，且位于项目目录之外。
+python3 tests/verify_alternatives.py --source . --method ESO --output /tmp/autoaim-eso-check --jobs 2
+```
+
+`verify_eso.py` 保留兼容入口；统一脚本显式关闭全部六项，再选择单项候选，由 CMake 注册专项。
+角点 I1-CONTRAST-IRLS、PnP I2-LM、EKF 平移 I3-LINEAR-CA、OpenVINO I9-THROUGHPUT、
+队列 I9-PREALLOC 和 ESO 的全部开关、回退与独立构建命令见
+[补充手册最前面的快速替换表](additional_information.md#quick-algorithm-swap)。
+THROUGHPUT 与 OpenVINO OFF、I3-LINEAR-CA 与 ESO 两组无效组合在配置阶段被拒绝；
+其它组合仍需独立验证。构建报告保存六个开关的实际值。
+当前集中入口的实际验收状态见[构建历史](build_history.md#central-selection-20260930)，
+此前手动注释版本的通过记录不代替本次验证；[方案审核](possible_method.md) 保留全部尚缺接口、
+数据或硬件的部分。`config/fast_choose.yaml` 的运行参数和 Docker 使用方式保持各自职责。
 
 ## 5. 想改某项功能该找哪里
 
@@ -225,10 +414,22 @@ XTYF-AutoAim/
 
 ### 6.1 配置文件
 
+日常只改 [fast_choose.yaml](config/fast_choose.yaml)：`active_detector` 选择
+`traditional/yolov5/yolo11`（默认 `yolov5`），`common` 保存公共参数，`detectors` 保存各自模型路径与阈值，
+`eso` 保存编译启用 ESO 后使用的实验参数。每项的单位、范围与作用直接写在配置注释中。
+启动示例：`build-debug/autoaim_node --config config/fast_choose.yaml`。
+
+原三份入口保留模型与物理契约；直接用 `--config config/offline/yolo11.yaml` 等旧命令时，
+检测器仍固定为该入口类型，忽略 `active_detector`，但调参值仍取自同一快调文件。
+不要在两处重复定义迁移参数；装载会明确报错。独立的旧完整配置无需迁移即可继续读取。
+完整加载和来源规则见[手册快速调参](additional_information.md#fast-choose)。
+本轮修改与实际回归结果见[快调构建记录](build_history.md#fast-choose-20260930)。
+
 | 文件 | 用途与是否能直接作为运行配置 |
 | --- | --- |
-| [armor.yaml](config/offline/armor.yaml) | 完整传统检测合成配置；生成示例数据后可回放，不是实机参数 |
-| [yolov5.yaml](config/offline/yolov5.yaml)、[yolo11.yaml](config/offline/yolo11.yaml) | YOLO 完整离线模板；需要提供模型路径、输入数据及匹配标定 |
+| [fast_choose.yaml](config/fast_choose.yaml) | 统一离线入口、检测器选择及日常参数；修改后重启生效 |
+| [armor.yaml](config/offline/armor.yaml) | 传统检测基础契约及固定检测器入口，引用快调参数；不是实机参数 |
+| [yolov5.yaml](config/offline/yolov5.yaml)、[yolo11.yaml](config/offline/yolo11.yaml) | YOLO 基础契约及固定检测器入口；模型路径在快调文件中配置 |
 | [calibration.yaml](config/offline/calibration.yaml) | 640×480 合成相机内外参；不是设备实测标定 |
 | [geometry.yaml](config/offline/geometry.yaml) | 合成四板等高竖直轴 profile；其它布局由同一结构表达 |
 | [corners.yaml](config/offline/corners.yaml) | 旧 class_id 格式的角点样例；配合当前 armor.yaml 前需补 plate_type，不能直接当作现成可运行样例 |
@@ -276,7 +477,7 @@ YOLO11 使用自己的 38 类映射，不能套用 YOLOv5 的裸整数。v5 的 
 
 ```bash
 # PnP 自检：程序生成已知姿态的角点，不需要外部角点文件
-build-debug/calibration_tool --config config/offline/armor.yaml --self-test
+build-debug/calibration_tool --config config/fast_choose.yaml --self-test
 
 # 内参与手眼求解：使用自己采集并划分的数据
 build-debug/calibration_tool --solve-intrinsics /path/intrinsic-data.yaml \
@@ -285,7 +486,7 @@ build-debug/calibration_tool --solve-hand-eye /path/hand-eye-data.yaml \
   --intrinsics /path/new-intrinsics/intrinsics.yaml --output /path/new-calibration
 
 # 单图计时：包含预热，输出 P50/P95，不等同于整条链的 FPS
-build-debug/bench_detector --config config/offline/armor.yaml \
+build-debug/bench_detector --config config/fast_choose.yaml \
   --image out/quickstart-data/frame_000001.png --iterations 100
 
 # 同一数据、同一敌方颜色，多套配置比较

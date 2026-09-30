@@ -1,0 +1,92 @@
+name: xtyf-autoaim
+
+x-build-args: &build-args
+  APP_UID: ${AUTOAIM_UID:-1000}
+  APP_GID: ${AUTOAIM_GID:-1000}
+
+x-offline: &offline
+  platform: linux/amd64
+  user: "${AUTOAIM_UID:-1000}:${AUTOAIM_GID:-1000}"
+  network_mode: none
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs:
+    - /tmp:rw,nosuid,nodev,mode=1777
+  environment:
+    HOME: /tmp
+  stdin_open: true
+  tty: true
+  command: [bash]
+
+x-assets: &assets
+  - type: bind
+    source: ${AUTOAIM_MODELS_DIR:-./models}
+    target: /models
+    read_only: true
+    bind: {create_host_path: false}
+  - type: bind
+    source: ${AUTOAIM_DATA_DIR:-./data}
+    target: /data
+    read_only: true
+    bind: {create_host_path: false}
+  - type: bind
+    source: ${AUTOAIM_CONFIG_DIR:-./config}
+    target: /config
+    read_only: true
+    bind: {create_host_path: false}
+  - type: bind
+    source: ${AUTOAIM_OUTPUT_DIR:-./out/docker}
+    target: /output
+    bind: {create_host_path: false}
+
+services:
+  dev:
+    <<: *offline
+    # CTest executes relocated binaries and installer test doubles in /tmp.
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,exec,mode=1777
+    image: xtyf-autoaim:dev
+    build:
+      context: .
+      target: dev
+      args: *build-args
+    volumes:
+      - type: bind
+        source: .
+        target: /workspace/src
+        read_only: true
+        bind: {create_host_path: false}
+      - type: volume
+        source: build-cache
+        target: /workspace/build
+      - type: bind
+        source: ${AUTOAIM_MODELS_DIR:-./models}
+        target: /models
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${AUTOAIM_DATA_DIR:-./data}
+        target: /data
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${AUTOAIM_CONFIG_DIR:-./config}
+        target: /config
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${AUTOAIM_OUTPUT_DIR:-./out/docker}
+        target: /output
+        bind: {create_host_path: false}
+  runtime:
+    <<: *offline
+    image: xtyf-autoaim:runtime
+    build:
+      context: .
+      target: runtime
+      args: *build-args
+    volumes: *assets
+
+volumes:
+  build-cache:

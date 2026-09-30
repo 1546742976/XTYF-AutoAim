@@ -274,8 +274,16 @@ public:
         .scale(255.0f);
 
     preprocessing.output().tensor().set_element_type(ov::element::f32);
+#if !AUTOAIM_I9_THROUGHPUT
     compiled = core.compile_model(preprocessing.build(), options.device,
                                   ov::hint::performance_mode(ov::hint::PerformanceMode::LATENCY));
+#else
+
+    // I9-THROUGHPUT is selected by its CMake algorithm option.
+    // Request capacity and input lifetime stay unchanged; latency gains require NUC measurement.
+    compiled = core.compile_model(preprocessing.build(), options.device,
+                                  ov::hint::performance_mode(ov::hint::PerformanceMode::THROUGHPUT));
+#endif
 
     slots.reserve(capacity);
 

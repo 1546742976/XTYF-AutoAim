@@ -1,6 +1,7 @@
 #pragma once
 
 #include "autoaim/estimation/health.hpp"
+#include "autoaim/estimation/state_estimator.hpp"
 
 namespace autoaim::estimation {
 struct AssociationCandidate {
@@ -13,7 +14,7 @@ struct AssociationCandidate {
 // filter 必须已经传播到该观测时刻；本函数不修改滤波器，也不额外预测。
 // 遍历真实板数与 PnP 候选数，返回所有通过创新门限的组合，暂不擅自消歧。
 std::vector<AssociationCandidate>
-association_candidates(const Ekf& filter, core::TimePoint predicted_at,
+association_candidates(const StateEstimator& filter, core::TimePoint predicted_at,
                        const GeometryProfile& geometry, const Observation& observation,
                        const MeasurementModel& measurement, const NisGate& gate);
 

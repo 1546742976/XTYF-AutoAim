@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 import platform
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -27,6 +28,12 @@ class InstallerTest(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix="xtyf-installer-test-")
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
+        # 独立脚本目录，既检查跨工作目录调用，也不读取项目中的真实大包。
+        project = self.root / "project with spaces"
+        project.mkdir()
+        self.script = project / SCRIPT.name
+        shutil.copyfile(SCRIPT, self.script)
+        self.project_archive = project / "MVS-5.1.0_Linux_x86_64_20260909.zip"
         self.calls = self.root / "unexpected-system-call"
         binary = self.root / "bin"
         self.binary = binary
@@ -49,7 +56,7 @@ class InstallerTest(unittest.TestCase):
 
     def invoke(self, *arguments, success=True):
         result = subprocess.run(
-            ["bash", str(SCRIPT), *arguments], env=self.environment,
+            ["bash", str(self.script), *arguments], env=self.environment,
             cwd=self.root, text=True, capture_output=True, timeout=15
         )
         self.assertFalse(self.calls.exists(), self.calls.read_text() if self.calls.exists() else "")
@@ -110,6 +117,7 @@ class InstallerTest(unittest.TestCase):
         self.assertIn("--mvs-deb", self.invoke("--help"))
 
     def test_default_software_preview(self):
+        self.project_archive.write_bytes(b"invalid package must be ignored by --skip-camera")
         output = self.invoke("--dry-run", "--skip-camera", "--yes")
 
         for package in (
@@ -137,12 +145,65 @@ class InstallerTest(unittest.TestCase):
         self.assertIn("未找到完整 MVS", self.invoke("--yes", "--mvs-root", root, success=False))
 
     def test_existing_sdk_preview(self):
+        self.project_archive.write_bytes(b"existing SDK takes precedence over local package")
         sdk = self.root / "MVS existing"
         (sdk / "include").mkdir(parents=True)
         (sdk / "lib/64").mkdir(parents=True)
         (sdk / "include/MvCameraControl.h").touch()
         (sdk / "lib/64/libMvCameraControl.so").touch()
         self.assertIn("复用已有 MVS", self.invoke("--dry-run", "--mvs-root", str(sdk)))
+
+    def test_project_archive_from_script_directory(self):
+        archive = self.archive({
+            "MVS-5.1.0_x86_64_20260909.deb": self.package("amd64").read_bytes(),
+            "MVS-5.1.0_x86_64_20260909.tar.gz": b"ignored; never execute vendor scripts",
+        })
+        shutil.copyfile(archive, self.project_archive)
+
+        for mode in ("--check-camera-only", "--dry-run"):
+            with self.subTest(mode=mode):
+                output = self.invoke(mode, "--mvs-root", str(self.root / "missing"))
+                self.assertIn(f"使用项目内 MVS 包：{self.project_archive}", output)
+                self.assertIn("mvcamctrlsdk-xtyf-test 1.0", output)
+
+                if mode == "--check-camera-only":
+                    self.assertIn("相机文件检查完成", output)
+                    self.assertNotIn("apt-get", output)
+                else:
+                    self.assertIn("安装选定 MVS 包", output)
+                    self.assertIn("--yes 不会跳过这些操作", output)
+
+    def test_explicit_package_overrides_project_archive(self):
+        self.project_archive.write_bytes(b"explicit input must take precedence")
+        package = self.package("amd64")
+        archive = self.archive({"runtime.deb": package.read_bytes()})
+        self.mock_download(package)
+
+        for option, source in (
+            ("--mvs-deb", str(package)),
+            ("--mvs-archive", str(archive)),
+            ("--mvs-url", "https://www.hikrobotics.com/example.deb"),
+        ):
+            with self.subTest(option=option):
+                output = self.invoke("--check-camera-only", option, source)
+                self.assertIn("相机文件检查完成", output)
+                self.assertNotIn("使用项目内 MVS 包", output)
+
+    def test_invalid_project_archive_blocks_installation(self):
+        self.project_archive.write_bytes(b"not a ZIP")
+        output = self.invoke(
+            "--yes", "--mvs-root", str(self.root / "missing"), success=False
+        )
+        self.assertIn("使用项目内 MVS 包", output)
+        self.assertIn("未开始系统安装", output)
+
+    def test_project_archive_rejects_wrong_architecture(self):
+        archive = self.archive({"runtime.deb": self.package("arm64").read_bytes()})
+        shutil.copyfile(archive, self.project_archive)
+        output = self.invoke(
+            "--check-camera-only", "--mvs-root", str(self.root / "missing"), success=False
+        )
+        self.assertIn("找到 0 个 amd64", output)
 
     def test_local_package_and_architecture(self):
         output = self.invoke("--dry-run", "--mvs-deb", str(self.package("amd64")))

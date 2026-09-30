@@ -71,14 +71,32 @@ bash install_dependence.sh --yes --skip-camera
 
 脚本声明支持 Ubuntu 22.04/24.04 amd64；本项目已验证环境是 Ubuntu 22.04。默认 OpenVINO 版本为脚本中的 2026.3.1，安装脚本可能升级 CMake；项目自身的最低 CMake 版本是 3.22。脚本不会自动构建或启动设备。
 
-相机 SDK 不使用固定的旧下载直链。按厂商流程取得 Linux SDK ZIP 后，可先检查，再人工安装：
+相机 SDK 默认使用项目根目录现有的 `MVS-5.1.0_Linux_x86_64_20260909.zip`，不再要求填写示例下载包路径。
+该压缩包通过 Git LFS 保存；克隆仓库前请安装 Git LFS 并运行 `git lfs install`。
+已克隆但未取得完整压缩包时，在仓库根目录运行 `git lfs pull`。
+该 ZIP 内含 `MVS-5.1.0_x86_64_20260909.deb` 和同版本
+`.tar.gz`；脚本只按 DEB 元数据选择唯一 amd64 MVS 包，不执行 TAR 中的安装脚本。
+实查 DEB 的包名为 `mvs`、架构为 `amd64`、`Version` 字段为 `2025-07-11`，
+与文件名的 `5.1.0` 标识不同；脚本如实显示元数据，不据文件名判断版本或包来源。
+DEB 内嵌 SDK 归档，头文件/库安装路径仍为 `/opt/MVS/include`、`/opt/MVS/lib/64`；
+库文件名为 `libMvCameraControl.so.4.8.2.1`，不能把这几个版本标识混为一谈。
+未指定包时先复用已安装 SDK，否则按**脚本所在目录**查找这份 ZIP，不依赖当前工作目录。
+`--mvs-deb`、`--mvs-archive`、`--mvs-url` 可显式覆盖；`--skip-camera` 完全跳过相机包。
+先检查本地包，再由你决定是否安装：
 
 ```bash
-bash install_dependence.sh --check-camera-only --mvs-archive /absolute/path/MvCamCtrlSDK.zip
-bash install_dependence.sh --mvs-archive /absolute/path/MvCamCtrlSDK.zip
+bash install_dependence.sh --check-camera-only \
+  --mvs-archive ./MVS-5.1.0_Linux_x86_64_20260909.zip
+bash install_dependence.sh --dry-run
+# 确认来源和许可后由你执行；无完整 SDK 时自动选择上述本地 ZIP
+bash install_dependence.sh
 ```
 
 本地 DEB 使用 `--mvs-deb FILE`；其它选项见 `bash install_dependence.sh --help`。检查成功只说明包结构等检查通过，不证明相机可用；安装会运行厂商包维护脚本，需先核实来源和许可。仅做传统检测时可用 `--skip-openvino`，构建时也必须关闭 OpenVINO。
+
+这份 DEB 的 `postinst` 会执行厂商 `setup.sh`，包括替换 `/opt/MVS`、配置 USB/虚拟串口
+权限及驱动/日志服务自启动等操作；`--yes` 不会跳过它们。`--check-camera-only` 和
+`--dry-run` 均不执行厂商脚本。本次只做结构检查与无安装测试，未实际安装驱动。
 
 ### 2.2 构建
 

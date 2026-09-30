@@ -15,6 +15,8 @@ with_camera=true
 with_gpu=false
 
 openvino_version=2026.3.1
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+project_mvs_archive="$script_dir/MVS-5.1.0_Linux_x86_64_20260909.zip"
 mvs_deb=
 mvs_archive=
 mvs_url=
@@ -33,7 +35,8 @@ usage() {
 
 默认：安装 C++17/20 工具链、CMake、OpenCV/Eigen/yaml-cpp、Python3、
       OpenVINO 2026.3.1、USB/CAN 配套库，并要求 Hikrobot MVS SDK。
-      MVS 已安装时复用，否则须提供官方 Linux amd64 的 .deb、ZIP 或 HTTPS 直链。
+      未指定相机包时先复用已安装 MVS，否则使用脚本同目录的
+      MVS-5.1.0_Linux_x86_64_20260909.zip；缺包时须显式提供安装文件。
 
   --dry-run                  只显示计划，不联网、不 sudo、不修改系统配置
   --yes                      不询问主脚本/APT 确认；不代替厂商许可协议
@@ -51,14 +54,17 @@ usage() {
 例：
   bash install_dependence.sh --dry-run --skip-camera
   bash install_dependence.sh --yes --skip-camera
-  bash install_dependence.sh --mvs-archive /absolute/path/MvCamCtrlSDK.zip
+  bash install_dependence.sh --check-camera-only
+  bash install_dependence.sh --mvs-archive ./MVS-5.1.0_Linux_x86_64_20260909.zip
   bash install_dependence.sh --check-camera-only --mvs-deb /absolute/path/MvCamCtrlSDK_Runtime.deb
 
-不会执行 apt upgrade/remove、禁用服务、修改 .bashrc、自动重启、
-调整 USB/CAN 参数或自动给用户增权。安装 MVS 会运行厂商包的维护脚本；
-请先检查包来源及许可，安装后的设备权限/驱动加载/硬件效果由人验收。
+主脚本不主动执行 apt upgrade/remove、禁用服务、修改 .bashrc、自动重启、
+调整 USB/CAN 参数或给用户增权。但实际 MVS DEB 的 postinst 会执行厂商 setup.sh，
+包括替换 /opt/MVS、配置 USB/虚拟串口权限以及驱动/日志服务自启动等操作。
+请先检查包来源及许可；--yes 不会跳过这些厂商操作，硬件效果仍由人验收。
 相机包检查需要已有 python3/dpkg-deb；URL 下载还需要 curl/系统 CA 证书。
-本地包检查（包括预览）会使用并清理临时文件；不会执行其中的 setup.sh。
+本地包检查（包括预览）会使用并清理临时文件，不执行任何厂商脚本。
+项目 ZIP 含 MVS-5.1.0_x86_64_20260909.deb 和同版本 tar.gz，只选择 DEB，忽略 tar.gz。
 直链由使用者从官网下载页取得，不绕过网站验证，不使用第三方镜像。
 若遇 403/登录页，请用浏览器按官方流程下载，再传 --mvs-archive/--mvs-deb。
 --dry-run 不联网，不能据此确认远程下载有效；与 --check-camera-only 互斥。
@@ -345,7 +351,9 @@ except (OSError, ValueError, RuntimeError, zipfile.BadZipFile, EOFError) as erro
 PY
   ) || die '相机包检查未通过，未开始系统安装'
   package_name=$(dpkg-deb -f "$mvs_deb" Package)
-  log "已检查 MVS 包结构与 amd64 架构：$package_name；安装文件：$mvs_deb（不证明包来源或设备可用）"
+  package_version=$(dpkg-deb -f "$mvs_deb" Version)
+  log "已检查 MVS 包结构与 amd64 架构：$package_name $package_version；" \
+    "安装文件：$mvs_deb（不证明包来源或设备可用）"
 }
 
 if "$with_camera"; then
@@ -362,10 +370,16 @@ if "$with_camera"; then
     prepare_camera_package "$camera_input"
   elif [[ -f "$mvs_root/include/MvCameraControl.h" ]] && find_mvs_library; then
     log "复用已有 MVS：$mvs_root（文件存在不等于驱动已通过实机验收）"
+  elif [[ -f "$project_mvs_archive" ]]; then
+    # 按脚本位置查找，不依赖调用者的工作目录；显式参数和已有 SDK 仍优先。
+    log "使用项目内 MVS 包：$project_mvs_archive"
+    prepare_camera_package "$project_mvs_archive"
   elif "$dry_run"; then
-    log 'MVS 尚缺：实际安装前请提供 --mvs-deb/--mvs-archive/--mvs-url，或明确 --skip-camera'
+    log "MVS 尚缺：未找到 $project_mvs_archive；" \
+      '请提供 --mvs-deb/--mvs-archive/--mvs-url，或明确 --skip-camera'
   else
-    die '未找到完整 MVS SDK。请从 Hikrobot 官网下载 Linux amd64 SDK 并传 --mvs-deb/--mvs-archive/--mvs-url；离线开发可用 --skip-camera'
+    die "未找到完整 MVS SDK 或项目内安装包：$project_mvs_archive。" \
+      '请提供 --mvs-deb/--mvs-archive/--mvs-url；离线开发可用 --skip-camera'
   fi
 fi
 
@@ -476,6 +490,7 @@ fi
 
 if "$with_camera" && [[ -n "$mvs_deb" ]]; then
   log "安装选定 MVS 包（会运行厂商维护脚本，请自行核实来源）：$package_name"
+  log '厂商脚本可能替换 SDK、配置 USB 权限及驱动/日志自启动；--yes 不会跳过这些操作。'
   run "${sudo_cmd[@]}" apt-get install "${apt_yes[@]}" -- "$mvs_deb"
 elif "$with_camera" && [[ -n "$mvs_url" ]] && "$dry_run"; then
   log '下载及包检查成功后，使用 apt-get install 安装选定的 amd64 MVS DEB；此处不执行。'

@@ -548,6 +548,18 @@ Windows 绑定目录可能缺少标注工具的原子无覆盖重命名能力；
 
 依赖安装脚本为 `install_dependence.sh`（文件名按用户要求统一），由人显式运行；支持预览、软件依赖、OpenVINO、Hikrobot MVS 本地 `.deb`/ZIP 或显式 HTTPS 直链，以及 `--check-camera-only` 无安装检查。相机包在系统安装前校验，ZIP 按 DEB 元数据选择唯一 amd64 包；不硬编码旧 SDK 链接、不绕过官网验证、不执行 ZIP 中的 setup.sh。只覆盖当前项目依赖，不照搬旧项目的 ROS2/额外库或删除服务步骤。脚本测试不执行系统安装，不以驱动文件存在替代相机、固件或设备能力证据。具体选项和官方源见 README。
 
+未显式提供相机包时，先复用完整 SDK，否则使用脚本同目录的
+`MVS-5.1.0_Linux_x86_64_20260909.zip`。实际包内有
+`MVS-5.1.0_x86_64_20260909.deb` 和同版本 `.tar.gz`，仅检查/选择 DEB，忽略 TAR；
+显式包参数优先，`--skip-camera` 不读取此包。新增的默认本地包路径不触发下载，
+也不把 MVS 版本、包检查结果或安装脚本存在升级为实机能力证据。
+本地包的 DEB `Version` 实际为 `2025-07-11`，不是文件名中的 `5.1.0`；
+脚本记录实际元数据，包来源与安装后的 SDK/设备状态仍须人工核实。
+DEB 内嵌 `MVS.tar.gz`，包含 `include/MvCameraControl.h` 及
+`lib/64/libMvCameraControl.so`（指向 `.so.4.8.2.1`）。DEB 的 `postinst` 会调用厂商
+`setup.sh` 替换 `/opt/MVS`，并调用权限、环境及驱动/日志自启动脚本；忽略外层 TAR
+不等于 DEB 安装没有这些副作用。检查/预览模式不执行厂商脚本。
+
 ---
 
 <a id="technical-specification"></a>

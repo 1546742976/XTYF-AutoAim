@@ -1,5 +1,32 @@
 # XTYF-AutoAim 构建与验证记录
 
+## 项目内 MVS 包适配（2026-09-30）
+
+安装器在没有显式相机包参数、也没有完整已安装 SDK 时，选择脚本同目录的
+`MVS-5.1.0_Linux_x86_64_20260909.zip`。保留显式参数优先、SDK 复用和
+`--skip-camera`；从其它工作目录调用也可使用默认包。Docker 仍跳过相机安装，
+不将 ZIP 加入默认镜像构建内容。
+
+只读检查实际 ZIP：包含同名版本的 DEB 与 TAR；选择 DEB，包名 `mvs`、架构 `amd64`、
+DEB Version `2025-07-11`。DEB 内还有 `MVS.tar.gz`，SDK 头文件位于 `include/`，
+64 位控制库在 `lib/64/`，库文件后缀 `4.8.2.1`。未用文件名替代实际元数据。
+ZIP SHA256：`257f94ffe9fc86e6bc57bedbff41e6c24673484f8f38e22475aced2431116c8a`。
+厂商 postinst/setup.sh 只读取、未运行；README 和脚本帮助说明其替换 SDK、权限及
+驱动/日志自启动操作，不再笼统宣称实际 DEB 安装没有系统副作用。
+
+验证环境为已有 WSL Ubuntu 22.04：
+
+```bash
+bash -n install_dependence.sh
+python3 tests/unit/test_install_script.py
+ctest --test-dir build-debug -R '^test_install_script$' --output-on-failure
+```
+
+无安装基线 18/18；修改后 22/22，CTest 选定项 1/1。另从 `/tmp` 通过绝对路径运行
+`--check-camera-only --mvs-root /tmp/xtyf-no-installed-mvs-20260930`，确认选择项目内真实包，
+DEB 结构及数据归档检查通过。缺少 unzip 时使用已有 Python 标准库只读查看内嵌归档，
+未安装额外依赖。未运行 APT、sudo、厂商安装脚本或设备程序，未声称实机或驱动安装验收通过。
+
 <a id="docker-20260930"></a>
 
 ## Docker 环境打包（2026-09-30，矩阵验证中）

@@ -13,6 +13,7 @@
 - [快速替换算法：精修 / LM / 平移 CA / 推理提示 / 队列预分配 / ESO](additional_information.md#quick-algorithm-swap)
 - [先理解处理流程](#1-先理解处理流程)
 - [编译并跑通第一个示例](#2-编译并跑通第一个示例)
+- [浏览器调参与离线实验工作台](workbench/README.md)
 - [目录和文件怎么看](#3-目录和文件怎么看)
 - [九模块速查与详细手册入口](#4-九个模块逐个说明)
 - [想改某项功能该找哪里](#5-想改某项功能该找哪里)
@@ -321,6 +322,16 @@ docker image inspect xtyf-autoaim:dev xtyf-autoaim:runtime
 `/opt/autoaim/share/autoaim/autoaim_build_information.json`。镜像 ID、实际大小和日志另记入
 构建历史。固定摘要和指定 OpenVINO 版本不保证未来 APT 仍提供全部包；缺版本时应修正
 来源或另行批准升级，不能静默改用最新版。SDK 编译和离线镜像均不证明设备可用。
+
+### 2.5 浏览器调参与离线实验工作台
+
+新增独立的 [本地工作台](workbench/README.md)，在 Linux / WSL 启动服务后通过浏览器
+编辑参数、另存配置包、选择算法预设或自定义组合、执行构建测试及离线回放，并对比报告。
+计算仍由现有 C++ 工具完成；实验目录位于源码树外，每次任务固定配置快照。
+参数修改对新任务生效，编译方案切换需要独立构建和测试。
+
+页面使用 Vue 3 + TypeScript，服务使用 Python FastAPI；依赖与启动命令见工作台文档。
+首版仅覆盖离线实验，不提供实时设备入口。
 
 ## 3. 目录和文件怎么看
 

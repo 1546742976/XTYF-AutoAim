@@ -645,6 +645,7 @@ if __name__ == "__main__":
   autoaim_test(test_can_disconnected tests/unit/test_can_disconnected.cpp autoaim_hal)
   autoaim_test(test_camera_disconnected tests/unit/test_camera_disconnected.cpp autoaim_hal)
   autoaim_test(test_bootstrap tests/unit/test_bootstrap.cpp autoaim_pipeline)
+  autoaim_test(test_check_config tests/unit/test_check_config.cpp autoaim_pipeline)
   autoaim_test(test_uart_adapter tests/unit/test_uart_adapter.cpp autoaim_pipeline)
   autoaim_test(test_uart_writer tests/contract/test_uart_writer.cpp autoaim_pipeline)
   autoaim_test(test_replay_publisher tests/contract/test_replay_publisher.cpp autoaim_control)

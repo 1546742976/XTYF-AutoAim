@@ -1,2 +1,8 @@
 /build*/
 /out/
+/.venv-workbench/
+/workbench/frontend/node_modules/
+/workbench/frontend/dist/
+/workbench/frontend/.npm-cache/
+__pycache__/
+*.pyc

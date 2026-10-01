@@ -153,6 +153,17 @@ Debug / Release、C++20、ASan/UBSan、现有 YOLOv5/YOLO11 离线回归及 SDK 
 本次矩阵见 [§11.6](#history-repair)；TSan 因运行时内存映射错误未验收，多配置未验证。
 实机缺口见 [§9](#unverified)。
 
+## 本地图形化离线工作台
+
+[工作台使用与接口说明](workbench/README.md) 提供浏览器参数表单、独立方案包、
+算法预设/组合构建、任务队列、回放预览和报告比较。工作台属于独立工具层，
+不增加算法分层，也不改写输入配置或扩展设备运行入口。
+
+`autoaim_node --check-config --config FILE` 复用 `load_pipeline_config` 输出有效配置，
+只校验装配，不运行处理链。`verify_alternatives.py --selection-file FILE` 在保留
+旧 `--method` 的同时支持完整编译开关组合；每个组合保留独立构建及测试证据。
+页面服务将任务配置冻结到源码树外的实验目录，报告继续使用既有逻辑/耗时分离口径。
+
 ## 阅读导航
 
 | 你想了解什么 | 从哪里开始 |

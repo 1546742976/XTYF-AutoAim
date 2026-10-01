@@ -12,6 +12,8 @@ namespace autoaim::pipeline {
 int run_entry(int argc, char** argv, std::optional<core::Role> required_role) {
   try {
     std::filesystem::path config_path, input_override, output_path, session_path, uart_path;
+    bool check_config = false;
+    bool replay_options = false;
 
     for (int i = 1; i < argc; ++i) {
       const std::string option(argv[i]);
@@ -20,10 +22,19 @@ int run_entry(int argc, char** argv, std::optional<core::Role> required_role) {
         std::cout << "Usage: " << argv[0]
                   << " --config FILE [--input EVENTS.yaml] [--output NEW.tsv]"
                      " [--record-session NEW_DIR] [--uart-output NEW.hex]\n"
+                     "       --check-config --config FILE\n"
+                     "Configuration check prints YAML without running the pipeline.\n"
                      "Offline only. Missing output writes TSV to stdout. No camera/serial/CAN "
                      "connection.\n";
 
         return 0;
+      }
+
+      if (option == "--check-config") {
+        if (check_config)
+          throw std::invalid_argument("Duplicate --check-config");
+        check_config = true;
+        continue;
       }
 
       if ((option != "--config" && option != "--input" && option != "--output" &&
@@ -31,6 +42,7 @@ int run_entry(int argc, char** argv, std::optional<core::Role> required_role) {
         throw std::invalid_argument("Unknown or incomplete argument: " + option);
 
       const auto value = std::filesystem::path(argv[++i]);
+      replay_options = replay_options || option != "--config";
 
       if (option == "--config")
         config_path = value;
@@ -47,6 +59,10 @@ int run_entry(int argc, char** argv, std::optional<core::Role> required_role) {
     if (config_path.empty())
       throw std::invalid_argument("--config is required");
 
+    if (check_config && replay_options)
+      throw std::invalid_argument(
+          "--check-config cannot be combined with replay input/output options");
+
     auto loaded = load_pipeline_config(config_path);
 
     if (!loaded)
@@ -56,6 +72,28 @@ int run_entry(int argc, char** argv, std::optional<core::Role> required_role) {
 
     if (required_role && config.role != *required_role)
       throw std::invalid_argument("Configuration role differs from thin entry role");
+
+    if (check_config) {
+      const auto& snapshot = *config.configuration_snapshot;
+      YAML::Node report;
+      report["check_schema_version"] = 1;
+      report["valid"] = true;
+      report["configuration_file"] = snapshot.entry.path.string();
+      report["base_configuration_file"] = snapshot.base.path.string();
+      report["fast_choose_file"] = snapshot.fast_choose
+          ? YAML::Node(snapshot.fast_choose->path.string()) : YAML::Node(YAML::NodeType::Null);
+      report["effective_configuration"] = YAML::Clone(snapshot.effective);
+      YAML::Emitter emitter;
+      emitter.SetDoublePrecision(17);
+      emitter << report;
+      if (!emitter.good())
+        throw std::runtime_error("Cannot serialize configuration check");
+      std::cout << emitter.c_str() << '\n';
+      std::cout.flush();
+      if (!std::cout)
+        throw std::runtime_error("Cannot write configuration check");
+      return 0;
+    }
 
     if (!input_override.empty())
       config.input_manifest = input_override;

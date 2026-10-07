@@ -118,6 +118,19 @@ ctest --test-dir build-debug --output-on-failure
 Release 构建将目录改为 `build-release`、构建类型改为 `Release`。
 需要 C++20 时增加 `-DCMAKE_CXX_STANDARD=20`，并使用独立的 `build-cxx20` 目录。
 
+CMake 配置阶段会将完整 `config/` 复制到构建目录，保留 `fast_choose.yaml`、
+`offline/` 和 `hardware/` 的目录结构；不必等到编译完成。进入构建目录后也可运行：
+
+```bash
+cd build-debug
+./autoaim_node --config config/fast_choose.yaml
+```
+
+模型、输入数据等相对路径以各 YAML 所在目录为基准；使用这份副本时，
+`fast_choose.yaml` 中的 `../models/` 和 `../out/` 分别指向构建目录下的 `models/` 和 `out/`。
+日常推荐修改源码目录的配置；再次运行 CMake 时会按复制规则更新副本，普通编译不会主动同步。
+继续从仓库根运行 `build-debug/autoaim_node --config config/fast_choose.yaml` 则使用源码配置。
+
 | CMake 选项 | 默认值与用途 |
 | --- | --- |
 | `BUILD_TESTING` | ON；构建测试并注册到 CTest |

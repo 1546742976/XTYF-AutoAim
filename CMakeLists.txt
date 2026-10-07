@@ -8,6 +8,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 include(CTest)
 
+# 配置阶段复制运行配置；保留 YAML 之间的相对路径关系。
+file(COPY "${PROJECT_SOURCE_DIR}/config" DESTINATION "${PROJECT_BINARY_DIR}")
+
 # 快速替换：全部算法选择集中在此；ON 启用候选，OFF 回退原实现。
 # 也可配置时传 -D<选项>=ON/OFF；更改后须重新构建，不修改 cpp/hpp。
 # 各候选分别验收；组合与目标 NUC 性能另验。详见 additional_information.md。

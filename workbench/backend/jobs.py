@@ -14,9 +14,10 @@ import uuid
 import math
 
 from .store import FLAGS, now, read_json, read_yaml, write_json
+from .nuc import validate_target
 
 
-KINDS = {"build", "check_config", "synthetic", "replay", "benchmark", "single_image", "ctest"}
+KINDS = {"build", "check_config", "synthetic", "replay", "benchmark", "single_image", "ctest", "nuc_probe", "nuc_run"}
 TERMINAL = {"succeeded", "failed", "cancelled", "interrupted"}
 
 
@@ -36,6 +37,7 @@ class JobQueue:
         self.thread = None
         self.process = None
         self.current = None
+        self.remote_stops = {}
         for path in store.jobs_dir.glob("*/job.json"):
             job = read_json(path)
             if job["status"] in {"queued", "running"}:
@@ -54,6 +56,14 @@ class JobQueue:
         self.thread.start()
 
     def stop(self):
+        with self.lock:
+            active = self.jobs.get(self.current)
+        if active and active["kind"] == "nuc_run" and active["status"] == "running":
+            try:
+                self.cancel(active["id"])
+            except ValueError as error:
+                with (Path(active["directory"]) / "log.txt").open("a", encoding="utf-8") as log:
+                    log.write("\n[workbench] Shutdown: " + str(error) + "\n")
         self.stopping.set()
         with self.lock:
             process = self.process
@@ -107,7 +117,23 @@ class JobQueue:
         if kind not in KINDS or not isinstance(options, dict):
             raise ValueError("Unsupported job kind or options")
         options = copy.deepcopy(options)
-        if kind == "build":
+        if kind in {"nuc_probe", "nuc_run"}:
+            options["target"] = validate_target(read_json(self.store.root / "nuc_target.json", {}),
+                                                require_paths=kind == "nuc_run")
+            if kind == "nuc_run":
+                self.store.profile(options.get("profile_id", ""))
+                flags = options.get("flags")
+                if not isinstance(flags, dict) or set(flags) != set(FLAGS) or any(type(v) is not bool for v in flags.values()):
+                    raise ValueError("NUC flags must explicitly specify all six boolean CMake names")
+                if type(options.get("openvino")) is not bool:
+                    raise ValueError("NUC openvino must be boolean")
+                if options.get("build_type") not in {"Debug", "Release"}:
+                    raise ValueError("NUC build_type must be Debug or Release")
+                if flags["AUTOAIM_I3_LINEAR_CA"] and flags["AUTOAIM_USE_ESO"]:
+                    raise ValueError("I3_LINEAR_CA and USE_ESO are mutually exclusive")
+                if flags["AUTOAIM_I9_THROUGHPUT"] and not options["openvino"]:
+                    raise ValueError("I9_THROUGHPUT requires OpenVINO")
+        elif kind == "build":
             flags = options.get("flags", {flag: False for flag in FLAGS})
             if not isinstance(flags, dict) or set(flags) != set(FLAGS) or any(type(value) is not bool for value in flags.values()):
                 raise ValueError("flags must explicitly specify all six boolean CMake names")
@@ -199,6 +225,12 @@ class JobQueue:
             if kind == "build":
                 write_json(directory / "selection.json", {"schema_version": 1,
                            "options": options["flags"], "openvino": options["openvino"]})
+            if kind in {"nuc_probe", "nuc_run"}:
+                request = {"job_id": identifier, "target": options["target"]}
+                if kind == "nuc_run":
+                    request["profile_values"] = read_yaml(Path(job["snapshots"][options["profile_id"]]))
+                    request["selection"] = {key: options[key] for key in ("flags", "openvino", "build_type")}
+                write_json(directory / "nuc_request.json", request)
             self.jobs[identifier] = job
             self._save(job)
             self.pending.put(identifier)
@@ -209,7 +241,13 @@ class JobQueue:
             job = self.jobs.get(identifier)
             if job is None:
                 raise KeyError("Unknown job")
-            if job["status"] not in TERMINAL:
+            remote_running = job["kind"] == "nuc_run" and job["status"] == "running"
+            if remote_running:
+                if identifier in self.remote_stops:
+                    raise ValueError("NUC 停止正在确认，请稍候。")
+                stop_event = threading.Event()
+                self.remote_stops[identifier] = stop_event
+            if job["status"] not in TERMINAL and not remote_running:
                 job["cancel_requested"] = True
                 if job["status"] == "queued":
                     job.update(status="cancelled", finished_at=now())
@@ -217,6 +255,19 @@ class JobQueue:
                 process = self.process if self.current == identifier else None
             else:
                 process = None
+        if remote_running:
+            # Keep it running until the remote process group has acknowledged termination.
+            try:
+                self._cancel_nuc(job)
+                with self.lock:
+                    if job["status"] not in TERMINAL:
+                        job["cancel_requested"] = True
+                        self._save(job)
+                    process = self.process if self.current == identifier else None
+            finally:
+                stop_event.set()
+                with self.lock:
+                    self.remote_stops.pop(identifier, None)
         if process:
             self._terminate(process)
         return self.get(identifier)
@@ -224,6 +275,11 @@ class JobQueue:
     @staticmethod
     def _terminate(process):
         if process.poll() is not None:
+            return
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+            process.wait(timeout=5)
             return
         try:
             # The supported execution host is Linux/WSL; descendants share this session.
@@ -258,6 +314,9 @@ class JobQueue:
         kind = job["kind"]
         config = job["snapshots"].get(options.get("profile_id"))
         tool = lambda name: self._binary(options["build_id"], name)
+        if kind in {"nuc_probe", "nuc_run"}:
+            return [(kind, [sys.executable, "-B", "-m", "workbench.backend.nuc",
+                           "probe" if kind == "nuc_probe" else "run", str(root / "nuc_request.json")], None)]
         if kind == "build":
             argv = [sys.executable, "-B", str(self.store.source / "tests/verify_alternatives.py"),
                     "--source", str(self.store.source), "--selection-file", str(root / "selection.json"),
@@ -308,6 +367,34 @@ class JobQueue:
             plans.append(("benchmark_" + str(index), argv, None))
         return plans
 
+    def _environment(self):
+        environment = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", PYTHONIOENCODING="utf-8")
+        root = str(Path(__file__).resolve().parents[2])
+        environment["PYTHONPATH"] = os.pathsep.join(filter(None, (root, environment.get("PYTHONPATH"))))
+        return environment
+
+    def _cancel_nuc(self, job):
+        root = Path(job["directory"])
+        argv = [sys.executable, "-B", "-m", "workbench.backend.nuc", "cancel", str(root / "nuc_request.json")]
+        record = {"name": "nuc_cancel", "argv": argv, "cwd": str(root), "exit_code": None,
+                  "started_at": now(), "finished_at": None}
+        try:
+            result = subprocess.run(argv, cwd=root, env=self._environment(), stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, timeout=20, check=False)
+            record["exit_code"] = result.returncode
+            with (root / "log.txt").open("ab") as log:
+                log.write(b"\n[workbench] Confirm remote stop:\n" + result.stdout)
+            report = read_json(root / "nuc_cancel_report.json", {})
+            if result.returncode or report.get("action") != "cancel" or report.get("status") != "cancelled":
+                raise ValueError("NUC 停止尚未确认；请检查 SSH 连接及远端运行状态。")
+        except subprocess.TimeoutExpired as error:
+            raise ValueError("NUC 停止确认超时；远端运行状态未知。") from error
+        finally:
+            record["finished_at"] = now()
+            with self.lock:
+                job["commands"].append(record)
+                self._save(job)
+
     def _run(self, job, label, argv, stdout_path):
         root = Path(job["directory"])
         record = {"name": label, "argv": list(argv), "cwd": str(root),
@@ -320,7 +407,7 @@ class JobQueue:
         with (root / "log.txt").open("ab", buffering=0) as log:
             log.write(("\n[workbench] " + label + ": " + repr(argv) + "\n").encode("utf-8"))
             separate = Path(stdout_path).open("wb") if stdout_path else None
-            environment = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+            environment = self._environment()
             try:
                 # No shell interpolation; tools receive exactly the persisted argv.
                 with self.lock:
@@ -368,6 +455,10 @@ class JobQueue:
                 with (Path(job["directory"]) / "log.txt").open("a", encoding="utf-8") as log:
                     log.write("\n[workbench] " + str(error) + "\n")
             finally:
+                with self.lock:
+                    stop_event = self.remote_stops.get(identifier)
+                if stop_event:
+                    stop_event.wait(timeout=25)
                 with self.lock:
                     job.update(status=outcome, error=error_message)
                     if self.stopping.is_set():

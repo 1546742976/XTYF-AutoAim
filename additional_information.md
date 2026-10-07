@@ -328,7 +328,7 @@ YOLOv5 适配旧 22 列角点格式，YOLO11 适配输入 `1×3×640×640`、输
 
 不要混淆两个“选择器”：`mission/target_selector` 选**目标**，`decision/armor_selector` 选该目标的**装甲板**。
 
-打符三个预留文件：[autoaim_rune.cpp](apps/autoaim_rune.cpp)、[rune_mission.hpp](include/autoaim/mission/rune/rune_mission.hpp)、[rune_mission.cpp](src/mission/rune/rune_mission.cpp)。它们目前为空、不构建，继续保留。
+打符入口 [autoaim_rune.cpp](apps/autoaim_rune.cpp) 已注册为可构建、安装的诊断占位程序：`--help` 返回 0，其余调用提示未实现并返回 2，不启动处理链或设备。[rune_mission.hpp](include/autoaim/mission/rune/rune_mission.hpp)、[rune_mission.cpp](src/mission/rune/rune_mission.cpp) 仍为空预留，不参与构建，继续保留。
 
 <a id="module-control"></a>
 
@@ -476,7 +476,7 @@ Docker 环境打包仅增加构建/安装/离线使用入口；默认不包含�
 模型数据。SDK 只通过独立只读构建输入做编译检查，不因此开放硬件入口。
 
 容器不改变九模块职责、配置解释或算法候选启用规则。根 CMake 的 `Runtime` 组件只安装
-11 个既有入口、显式列出的示例配置和生产构建标识，不导出静态库、头文件、测试或打符目标。
+12 个入口（含打符诊断占位程序）、显式列出的示例配置和生产构建标识，不导出静态库、头文件、测试或打符任务实现。
 示例配置包含公共的 `config/fast_choose.yaml`，保持离线配置的 `../fast_choose.yaml` 引用。
 `tests/test_install_layout.py` 验证安装、搬移目录后启动与回放；不需要 Docker 或 root。
 `tools/container/runtime-packages.sh` 固定开发镜像实际安装的运行包版本，显式保留

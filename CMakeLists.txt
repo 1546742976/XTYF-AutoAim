@@ -272,8 +272,8 @@ autoaim_dependencies(control hal)
 autoaim_dependencies(mission decision)
 autoaim_dependencies(pipeline mission control hal)
 
-foreach(entry autoaim_node offline_replay autoaim_infantry autoaim_sentry calibration_tool
-  bench_detector annotate_session)
+foreach(entry autoaim_node offline_replay autoaim_infantry autoaim_sentry autoaim_rune
+  calibration_tool bench_detector annotate_session)
   add_executable(${entry} apps/${entry}.cpp)
   target_link_libraries(${entry} PRIVATE autoaim_pipeline)
 endforeach()
@@ -286,9 +286,9 @@ target_link_libraries(replay_visualizer PRIVATE autoaim_pipeline)
 add_executable(pipeline_metrics tools/pipeline_metrics/main.cpp)
 target_link_libraries(pipeline_metrics PRIVATE autoaim_options)
 
-# 安装只面向现有离线入口；不导出模块库、测试或打符预留目标。
+# 安装现有离线入口与打符诊断占位入口；不导出模块库或测试。
 include(GNUInstallDirs)
-install(TARGETS autoaim_node offline_replay autoaim_infantry autoaim_sentry
+install(TARGETS autoaim_node offline_replay autoaim_infantry autoaim_sentry autoaim_rune
   calibration_tool bench_detector annotate_session synthetic_sim protocol_tester
   replay_visualizer pipeline_metrics
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime)

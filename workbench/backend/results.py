@@ -143,7 +143,9 @@ def results(job):
     for item in artifacts(job):
         relative, name = item["path"], item["name"]
         path = artifact_file(job, relative)
-        if name in {"report.yaml", "timing.yaml", "check_config.yaml"}:
+        if name in {"nuc_report.json", "nuc_cancel_report.json"}:
+            reports.append({"name": relative, "kind": "nuc", "data": json_safe(read_json(path, {}))})
+        elif name in {"report.yaml", "timing.yaml", "check_config.yaml"}:
             try:
                 data = yaml.safe_load(path.read_text(encoding="utf-8"))
             except yaml.YAMLError:

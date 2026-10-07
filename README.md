@@ -191,7 +191,7 @@ BuildKit 的 APT 下载缓存用于中断后复用已下载包，不进入镜像
 | --- | --- |
 | `dev` | 编译器、CMake、Python 与开发依赖；宿主编辑源码，容器编译和测试 |
 | `build` | 内部 Release 构建阶段，生成 `Runtime` 安装组件 |
-| `runtime` | 11 个既有程序、示例配置及运行库；不装源码、测试、编译器或 CMake |
+| `runtime` | 12 个程序（含打符诊断占位入口）、示例配置及运行库；不装源码、测试、编译器或 CMake |
 | `sdk-check` | 可选海康 SDK 编译检查；默认构建不需要 SDK，不运行设备 |
 
 在仓库根目录构建两个常用镜像（PowerShell / Bash 相同）：
@@ -491,6 +491,7 @@ YOLO11 使用自己的 38 类映射，不能套用 YOLOv5 的裸整数。v5 的 
 | --- | --- |
 | [apps/autoaim_node.cpp](apps/autoaim_node.cpp)、[apps/offline_replay.cpp](apps/offline_replay.cpp) | 同一个公共离线运行流程；支持 --config、--input、--output、--record-session、--uart-output |
 | [apps/autoaim_infantry.cpp](apps/autoaim_infantry.cpp)、[apps/autoaim_sentry.cpp](apps/autoaim_sentry.cpp) | 多做一次角色校验的入口，不是两份独立算法 |
+| [apps/autoaim_rune.cpp](apps/autoaim_rune.cpp) | 可构建、安装的打符诊断占位入口；`--help` 返回 0，其余调用提示未实现并返回 2，不启动处理链或设备 |
 | [apps/calibration_tool.cpp](apps/calibration_tool.cpp) | PnP 检查、内参求解、手眼外参求解 |
 | [apps/bench_detector.cpp](apps/bench_detector.cpp) | 单图检测计时或同一数据集上的多配置评测 |
 | [apps/annotate_session.cpp](apps/annotate_session.cpp) | 离线人工标注的导出、审核回看、独立会话副本应用；支持 --self-test，不运行模型或设备 |

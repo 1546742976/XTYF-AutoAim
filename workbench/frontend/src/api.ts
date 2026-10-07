@@ -10,6 +10,13 @@ export interface Frame { generation: string | number; frame_id: string | number;
 export interface Results { reports: {name: string; kind: string; data: any}[]; frames: Frame[]; commands: AnyRecord[]; comparison?: {compatible: boolean; reasons: string[]; rows: AnyRecord[]} }
 export interface Entry { name: string; path: string; directory: boolean; size: number; url?: string }
 export interface FileList { path: string; parent: string | null; entries: Entry[] }
+export interface NucTarget {
+  host: string; user: string; port: number; identity_file: string; project_dir: string;
+  build_dir: string; executable: string; device_config: string; workspace_dir: string;
+  yolov5_model: string; yolo11_model: string;
+}
+export interface NucConfiguration { target: Partial<NucTarget> | null; configured: boolean; ssh_available: boolean; live_entry_note?: string }
+export interface NucRunOptions { profile_id: string; flags: Record<string, boolean>; openvino: boolean; build_type: string }
 export async function api<T>(path: string, body?: any): Promise<T> {
   const response = await fetch(path, { method: body === undefined ? 'GET' : 'POST', headers: body === undefined ? {} : {'Content-Type': 'application/json'}, body: body === undefined ? undefined : JSON.stringify(body) })
   const text = await response.text()

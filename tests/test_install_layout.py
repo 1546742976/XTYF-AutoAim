@@ -16,7 +16,7 @@ def run(*args):
 
 def verify(cmake, build, config):
   applications = {
-    "autoaim_node", "offline_replay", "autoaim_infantry", "autoaim_sentry",
+    "autoaim_node", "offline_replay", "autoaim_infantry", "autoaim_sentry", "autoaim_rune",
     "calibration_tool", "bench_detector", "annotate_session", "synthetic_sim",
     "protocol_tester", "replay_visualizer", "pipeline_metrics",
   }
@@ -43,10 +43,14 @@ def verify(cmake, build, config):
     for filename in ("calibration.yaml", "geometry.yaml", "yolov5.yaml", "yolo11.yaml"):
       if not (configuration.parent / "offline" / filename).is_file():
         raise AssertionError(f"Missing configuration: {filename}")
-    for application in ("offline_replay", "annotate_session", "bench_detector"):
+    for application in ("offline_replay", "annotate_session", "bench_detector", "autoaim_rune"):
       run(bindir / application, "--help")
     # Runtime relocation is checked without external models, independently of active_detector.
     configuration = configuration.parent / "offline" / "armor.yaml"
+    rune = subprocess.run([str(bindir / "autoaim_rune"), "--config", str(configuration)],
+                          capture_output=True, text=True)
+    if rune.returncode != 2 or rune.stdout or "Rune mission is not implemented" not in rune.stderr:
+      raise AssertionError("Rune placeholder must reject running an armor configuration")
     dataset = root / "synthetic"
     run(bindir / "synthetic_sim", "--config", configuration,
         "--output", dataset, "--frames", "3")

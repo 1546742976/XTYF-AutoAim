@@ -10,7 +10,8 @@ from fastapi.staticfiles import StaticFiles
 
 from .jobs import JobQueue
 from .results import artifact_file, artifacts, results
-from .store import Workspace, FLAGS
+from .store import Workspace, FLAGS, read_json, write_json
+from .nuc import validate_target
 
 
 def create_app(source, workspace, *, start_worker=True):
@@ -69,6 +70,25 @@ def create_app(source, workspace, *, start_worker=True):
     @app.get("/api/builds")
     def builds():
         return tasks.builds()
+
+    def nuc_configuration():
+        target = read_json(store.root / "nuc_target.json", {})
+        return {"target": target,
+                "configured": all(target.get(key) for key in
+                                  ("host", "user", "project_dir", "build_dir", "device_config", "workspace_dir")),
+                "ssh_available": shutil.which("ssh") is not None,
+                "live_entry_note": "当前项目入口只支持离线；NUC 需要支持设备配置及 --check-config/--config 的实时程序。"}
+
+    @app.get("/api/nuc")
+    def nuc_target():
+        return nuc_configuration()
+
+    @app.post("/api/nuc")
+    def save_nuc_target(body: dict = Body(...)):
+        target = validate_target(body)
+        with store.lock:
+            write_json(store.root / "nuc_target.json", target)
+        return nuc_configuration()
 
     @app.get("/api/jobs")
     def jobs():

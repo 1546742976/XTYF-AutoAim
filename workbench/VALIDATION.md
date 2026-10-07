@@ -1,5 +1,90 @@
 # 工作台验证记录
 
+## 2026-10-07：两批瘦身删除
+
+执行目录为 `E:\大学\巡天御风\XTYF-AutoAim`，分支 `codex/slimming-deletions`。
+初始提交为 `1efa4952dac28623b9516d2ffae37cedcebb5ff2`；开始时工作区及暂存区均为空。
+只实施批准的 Z1 / L1 范围，原有验证记录保留在下方。
+
+| 批次 | 实际 diff 与指标 | 结果 / 回滚点 |
+| --- | --- | --- |
+| Z1 | `App.vue` 删除 `buildName/profileLabel`；`remote_runner.py` 删除未用 `sys`；`test_backend.py` 删除未用 `write_json` 导入符号。3 文件，1 行增加 / 4 行删除；私有函数 2→0，导入符号 2→0 | 提交 `a0f65a6897475e4dffaccb3d255d8e23097cd6bb`，相关验证通过；其他 358 个跟踪文件字节一致 |
+| L1 | 仅删除 `assets/index-caNWWbLH.js`（134,396 B）和 `assets/index-CvYuxZNt.css`（24,070 B）。dist 从 5 文件 / 332,170 B 变为 3 文件 / 173,704 B，减少 158,466 B（47.7%） | 完整 dist 及 SHA256 清单已备份；当前 HTML、JS、CSS 字节未变。Git 只提交本节记录，忽略产物不入库 |
+
+Z1 不承诺速度或包体积收益；L1 只减少本地过期资源占用，当前页面加载的资源和传输量未变。
+
+### 引用与接口保护
+
+删除前重新检查全部跟踪文件、当前 HTML 和资源依赖图，没有两个旧资源名的引用；
+可观察的浏览器清单中没有其他工作台页面，验证页使用当前 JS/CSS，未识别到引用旧资源的页面。
+完整 5 文件备份及待删文件 SHA256 均与删除前产物一致；没有清空 dist 目录。
+
+打符入口、构建/安装注册、`Task::rune`、两个 `rune_mission` 预留文件未改；
+`autoaim_rune --help` 返回 0、其他调用返回 2 的诊断源码及输出文本未改。
+六个候选 CMake 开关仍默认 OFF，OpenVINO CMake 默认 ON；I3/ESO 互斥、THROUGHPUT
+需要 OpenVINO 的约束未改。三检测器选择、默认 YOLOv5、配置回指、估计器接口、
+`--method` / `--selection-file` 和 `verify_eso.py` 均未改；HTTP 接口和请求字段未改。
+
+浏览器检查了基线、六预设、自定义组合、模型及构建选项、创建构建按钮和独立 NUC 运行按钮。
+选择 I1 后两个表单同步勾选 I1；I3+ESO 及未启用 OpenVINO 的 THROUGHPUT 都显示原有提示、
+禁用构建提交。最后恢复原表单选项，没有保存配置、提交任务或连接 NUC。
+NUC 按钮仍因既有远端路径与方案未配置完整而禁用，此轮没有硬件运行验收。
+
+### 验证命令与本轮结果
+
+以下 PowerShell 命令在项目根目录执行；Python 使用已存在的本地依赖，不安装依赖。
+前端输出使用独立暂存目录，没有覆盖在线 dist。
+
+```powershell
+Set-Location -LiteralPath 'E:\大学\巡天御风\XTYF-AutoAim'
+$slimRun = 'C:\Users\Lenovo\AppData\Local\xtyf-autoaim-workbench\slimming\20261007-2894c6ff'
+npm.cmd --prefix workbench/frontend run build -- --outDir "$slimRun\dist-Z1"
+& 'D:\python\python.exe' -B -m unittest workbench.backend.tests.test_backend -v
+wsl.exe -d Ubuntu-22.04 --cd /mnt/e/大学/巡天御风/XTYF-AutoAim -- python3 -B -m unittest workbench.backend.tests.test_nuc -v
+& 'D:\python\python.exe' -B tests/verify_alternatives.py --self-test
+git diff --check
+```
+
+| 验证 | 实际结果 |
+| --- | --- |
+| Vue TypeScript / Vite 生产构建 | 通过；暂存的 3 个产物与在线当前 HTML/JS/CSS SHA256 完全一致 |
+| Windows 后端既有测试 | 19 项：18 通过，1 项 POSIX 进程组测试按平台跳过 |
+| WSL Linux NUC helper 既有测试 | 18/18 通过；仅使用临时进程夹具，没有连接 NUC |
+| 算法验证脚本自测 | 278 项通过；保留旧入口与组合约束；没有真实 C++ 构建 |
+| 删除前后 HTTP | `/`、当前 JS/CSS、`/api/context` 均 200，资源响应与磁盘字节一致；删除后的两个旧 URL 为 404 |
+| 删除后浏览器 | 参数、算法方案、任务及日志区域正常；默认检测器仍为 `yolov5`；没有创建任务 |
+| Diff / 接口保护 | 空白检查通过；Z1 之外的源码字节一致，L1 另增加本节记录 |
+
+复查 HTTP 的命令（服务此轮已运行在 8766，不另启动服务）：
+
+```powershell
+@('/', '/assets/index-B6t77Qy8.js', '/assets/index-CP64yvY-.css', '/api/context') | ForEach-Object {
+  (Invoke-WebRequest -UseBasicParsing -Uri ('http://127.0.0.1:8766' + $_)).StatusCode
+}
+```
+
+本轮是清理及软件接口回归，不重跑未变化的 C++ 矩阵，也不提供 NUC 性能或硬件通过结论。
+
+### Diff、备份与回滚
+
+证据目录：`C:\Users\Lenovo\AppData\Local\xtyf-autoaim-workbench\slimming\20261007-2894c6ff`。
+其中 `Z1.diff` 是三个源码文件的实际 diff，`L1-artifact.diff` 是两个忽略产物的删除清单，
+`L1.diff` 是本验证文档的实际 diff；`Z1-*.log` 保留各验证输出。
+`dist-before/` 保留完整原 dist，`dist_inventory_before.json` / `dist_inventory_after.json`
+记录 SHA256 和字节数，`metrics_before.json` / `metrics_after.json` 记录前后指标。
+`UI-*.txt` / `UI-assets-*.json` 与 `slimming-interfaces-preserved.png` 保留页面检查证据。
+
+Z1 用独立提交回滚；L1 必须恢复下面两个产物，不能只用 Git。
+如需撤销 L1 的文档记录，另对相应文档提交执行 `git revert <文档提交号>`。
+
+```powershell
+Set-Location -LiteralPath 'E:\大学\巡天御风\XTYF-AutoAim'
+git revert a0f65a6897475e4dffaccb3d255d8e23097cd6bb
+$slimBackup = 'C:\Users\Lenovo\AppData\Local\xtyf-autoaim-workbench\slimming\20261007-2894c6ff\dist-before\assets'
+Copy-Item -LiteralPath "$slimBackup\index-caNWWbLH.js" -Destination 'E:\大学\巡天御风\XTYF-AutoAim\workbench\frontend\dist\assets\index-caNWWbLH.js'
+Copy-Item -LiteralPath "$slimBackup\index-CvYuxZNt.css" -Destination 'E:\大学\巡天御风\XTYF-AutoAim\workbench\frontend\dist\assets\index-CvYuxZNt.css'
+```
+
 ## 2026-10-07：Windows 工作台与 NUC SSH 入口
 
 新增范围是 Windows 本地工作台到 NUC 的 SSH 目标设置、只读检查和实时程序任务入口。

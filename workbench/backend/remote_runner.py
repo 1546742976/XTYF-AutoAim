@@ -15,7 +15,6 @@ import re
 import selectors
 import signal
 import subprocess
-import sys
 import threading
 import time
 

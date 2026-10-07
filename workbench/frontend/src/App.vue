@@ -454,8 +454,6 @@ function contractLabel(key:string) {
   return names[detector] ? `${names[detector]} · ${!resource?'基础配置':resource==='calibration_file'?'相机标定':resource==='geometry_files'?'几何模型 '+(Number(key.split('.')[2])+1):resource}` : key
 }
 function timestamp(value?:string) { return value ? new Date(value).toLocaleString('zh-CN',{hour12:false}) : '—' }
-function buildName(id:string) {return builds.value.find(b => b.id === id)?.name ?? id}
-function profileLabel(id:string) {return profiles.value.find(p => p.id === id)?.name ?? id}
 async function initialize() {
   loading.value = true;error.value = ''
   try {

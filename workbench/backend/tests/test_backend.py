@@ -14,7 +14,7 @@ import yaml
 from workbench.backend import create_app
 from workbench.backend.jobs import JobQueue
 from workbench.backend.results import artifact_file, comparison, read_commands, results
-from workbench.backend.store import Workspace, FLAGS, leaves, read_json, write_json
+from workbench.backend.store import Workspace, FLAGS, leaves, read_json
 
 
 SOURCE = Path(__file__).resolve().parents[3]
